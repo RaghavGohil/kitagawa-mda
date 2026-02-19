@@ -1,0 +1,8 @@
+services:
+  kitagawa-inference:
+    build: .
+    gpus: all
+    volumes:
+      - mnt:/app/mnt
+    ports:
+      - "4200:4200"

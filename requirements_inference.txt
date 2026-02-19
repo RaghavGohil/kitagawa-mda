@@ -1,0 +1,14 @@
+geopandas
+pandas
+prefect
+pyproj
+rasterio
+Shapely
+tqdm
+folium
+numpy
+scipy
+matplotlib
+opencv-python
+
+# please install other os-dependent libs yourself (for dev)
