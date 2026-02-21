@@ -1,0 +1,12 @@
+# torch and torchvision are provided by the base image
+ultralytics
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+geopandas
+pandas
+pyproj
+rasterio
+Shapely
+tqdm
+numpy
+scipy

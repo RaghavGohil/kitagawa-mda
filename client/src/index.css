@@ -1,0 +1,179 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ===============================
+       CORE NEUTRAL SYSTEM
+       =============================== */
+    --background: 0 0% 6%;
+    --foreground: 0 0% 92%;
+
+    --card: 0 0% 9%;
+    --card-foreground: 0 0% 92%;
+
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 92%;
+
+    /* Primary = emphasis, not color */
+    --primary: 0 0% 85%;
+    --primary-foreground: 0 0% 10%;
+
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 0 0% 90%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 0 0% 22%;
+    --accent-foreground: 0 0% 92%;
+
+    /* Semantic alerts (subtle, not flashy) */
+    --destructive: 0 65% 45%;
+    --destructive-foreground: 0 0% 96%;
+
+    --border: 0 0% 18%;
+    --input: 0 0% 16%;
+    --ring: 0 0% 55%;
+
+    --radius: 0.4rem;
+
+    /* ===============================
+       STATUS SEMANTICS (MUTED)
+       =============================== */
+    --status-normal: 0 0% 65%;
+    --status-warning: 38 70% 50%;
+    --status-critical: 0 65% 45%;
+    --status-info: 210 15% 65%;
+
+    --anomaly-low: 38 70% 50%;
+    --anomaly-medium: 25 70% 45%;
+    --anomaly-high: 0 65% 45%;
+
+    /* Vessel / Zone differentiation = grayscale */
+    --vessel-cargo: 0 0% 70%;
+    --vessel-tanker: 0 0% 60%;
+    --vessel-fishing: 0 0% 55%;
+    --vessel-passenger: 0 0% 75%;
+    --vessel-military: 0 0% 45%;
+    --vessel-unknown: 0 0% 50%;
+
+    --zone-eez: 0 0% 22%;
+    --zone-restricted: 0 0% 18%;
+    --zone-port: 0 0% 26%;
+    --zone-shipping: 0 0% 30%;
+
+    /* Shadows (flat, professional) */
+    --shadow-card: 0 2px 12px hsl(0 0% 0% / 0.4);
+    --shadow-elevated: 0 6px 24px hsl(0 0% 0% / 0.6);
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 7%;
+    --sidebar-foreground: 0 0% 88%;
+    --sidebar-accent: 0 0% 16%;
+    --sidebar-border: 0 0% 18%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", system-ui, sans-serif;
+  }
+
+  .font-mono {
+    font-family: "JetBrains Mono", monospace;
+  }
+}
+
+@layer components {
+  /* Status badges (clean, no glow) */
+  .status-normal {
+    @apply text-[hsl(var(--status-normal))];
+  }
+  .status-warning {
+    @apply text-[hsl(var(--status-warning))];
+  }
+  .status-critical {
+    @apply text-[hsl(var(--status-critical))];
+  }
+  .status-info {
+    @apply text-[hsl(var(--status-info))];
+  }
+}
+
+/* ===============================
+   LEAFLET — CLEAN GIS STYLE
+   =============================== */
+.leaflet-container {
+  background: hsl(0 0% 6%) !important;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.leaflet-control-zoom {
+  background: hsl(0 0% 10%) !important;
+  border: 1px solid hsl(0 0% 18%) !important;
+}
+
+.leaflet-control-zoom a {
+  background: hsl(0 0% 10%) !important;
+  color: hsl(0 0% 85%) !important;
+  border-bottom-color: hsl(0 0% 18%) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: hsl(0 0% 14%) !important;
+}
+
+.leaflet-control-attribution {
+  background: hsl(0 0% 8% / 0.9) !important;
+  color: hsl(0 0% 55%) !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: hsl(0 0% 10%) !important; /* dark background */
+  color: hsl(0 0% 92%) !important; /* light text */
+  border: 1px solid hsl(0 0% 18%) !important;
+  border-radius: 8px !important; /* slightly rounded corners */
+  box-shadow: none !important; /* remove shadow */
+  padding: 2px 2px !important; /* optional: nice padding */
+}
+
+.leaflet-popup-tip {
+  background: hsl(0 0% 9%) !important; /* match popup background */
+  box-shadow: none !important; /* remove tip shadow */
+}
+
+/* ===============================
+   SCROLLBAR — MUTED & INVISIBLE
+   =============================== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(0 0% 28%) hsl(0 0% 8%);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: hsl(0 0% 8%);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(0 0% 28%);
+  border-radius: 6px;
+  border: 2px solid hsl(0 0% 8%);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(0 0% 35%);
+}

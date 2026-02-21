@@ -1,8 +1,137 @@
 services:
-  kitagawa-inference:
-    build: .
-    gpus: all
-    volumes:
-      - mnt:/app/mnt
+  # -------------------------------------------------------------------
+  # Inference Server (GPU) — YOLO vessel detection
+  # -------------------------------------------------------------------
+  inference-server:
+    build:
+      context: .
+      dockerfile: inference_server/Dockerfile
+    container_name: kitagawa-inference
     ports:
-      - "4200:4200"
+      - "8001:8001"
+    volumes:
+      - transient_data:/data
+      - ./inference_server:/app/inference_server
+      - ./shared:/app/shared
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    environment:
+      - DATA_DIR=/data
+      - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
+      - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # Backend Server — API for frontend, data processing
+  # -------------------------------------------------------------------
+  backend-server:
+    build:
+      context: .
+      dockerfile: backend_server/Dockerfile
+    container_name: kitagawa-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - transient_data:/data
+      - ./backend_server:/app/backend_server
+      - ./shared:/app/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      inference-server:
+        condition: service_healthy
+    environment:
+      - DATA_DIR=/data
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=kitagawa
+      - POSTGRES_USER=kitagawa
+      - POSTGRES_PASSWORD=kitagawa
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=kitagawa-chips
+      - INFERENCE_SERVER_URL=http://inference-server:8001
+      - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
+      - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # PostgreSQL + PostGIS
+  # -------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: kitagawa-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=kitagawa
+      - POSTGRES_USER=kitagawa
+      - POSTGRES_PASSWORD=kitagawa
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U kitagawa -d kitagawa" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # MinIO — Object storage for image chips
+  # -------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: kitagawa-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # Client — Frontend (React + Leaflet)
+  # -------------------------------------------------------------------
+  client:
+    build:
+      context: ./client
+    container_name: kitagawa-client
+    ports:
+      - "3000:80"
+    depends_on:
+      backend-server:
+        condition: service_healthy
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  minio_data:
+  transient_data:
