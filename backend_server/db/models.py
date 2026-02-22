@@ -65,6 +65,7 @@ class Detection(Base):
     # AIS correlation result
     mmsi = Column(BigInteger, nullable=True, index=True)
     correlation_distance_m = Column(Float, nullable=True)
+    custom_name = Column(String(512), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -116,6 +117,17 @@ class ImageChip(Base):
     )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AISVessel(Base):
+    """
+    Vessel identity data extracted from AIS messages.
+    """
+    __tablename__ = "ais_vessels"
+
+    mmsi = Column(BigInteger, primary_key=True, index=True)
+    vessel_name = Column(String(512), nullable=True)
+    vessel_type = Column(String(255), nullable=True)
 
 
 class ProcessedImage(Base):

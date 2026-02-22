@@ -31,8 +31,9 @@ async def get_ais_tracks(
     max_lat: float = Query(...),
     time_start: Optional[str] = Query(None, description="ISO timestamp start"),
     time_end: Optional[str] = Query(None, description="ISO timestamp end"),
+    mmsis: Optional[str] = Query(None, description="Comma-separated list of MMSIs"),
     zoom: int = Query(10, ge=1, le=22),
-    limit: int = Query(100, ge=1, le=1000, description="Max number of MMSIs"),
+    limit: int = Query(500, ge=1, le=2000, description="Max number of MMSIs"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -47,22 +48,14 @@ async def get_ais_tracks(
     if time_end:
         time_filter += " AND timestamp <= CAST(:time_end AS timestamptz)"
 
-    # Dynamically adjust limit based on zoom to prevent clutter
-    if zoom < 8:
-        # Very low zoom: hide background tracks entirely or show almost none
-        effective_limit = 0
-    elif zoom < 10:
-        # Mid-low zoom: show only a few key vessels
-        effective_limit = min(limit, 20)
-    elif zoom < 13:
-        # Mid zoom: show up to 50 vessels
-        effective_limit = min(limit, 50)
-    else:
-        # High zoom: use requested limit
-        effective_limit = limit
+    # Always show tracks
+    effective_limit = limit
 
-    if effective_limit == 0:
-        return {"tracks": [], "total_vessels": 0, "status": "hidden_at_low_zoom"}
+    mmsi_filter_sql = ""
+    if mmsis:
+        mmsi_list_parsed = [int(m.strip()) for m in mmsis.split(",") if m.strip().isdigit()]
+        if mmsi_list_parsed:
+            mmsi_filter_sql = " AND mmsi = ANY(:mmsis_arr)"
 
     # First, find distinct MMSIs in the area
     mmsi_sql = text(f"""
@@ -70,7 +63,7 @@ async def get_ais_tracks(
         FROM ais_tracks
         WHERE ST_Intersects(
             geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-        ) {time_filter}
+        ) {time_filter} {mmsi_filter_sql}
         LIMIT :limit
     """)
 
@@ -79,12 +72,14 @@ async def get_ais_tracks(
         "max_lon": max_lon, "max_lat": max_lat,
         "limit": effective_limit,
     }
+    if mmsis and mmsi_list_parsed:
+        params["mmsis_arr"] = mmsi_list_parsed
     if time_start:
         params["time_start"] = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
     if time_end:
         params["time_end"] = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
 
-    print(f"[AIS] Querying tracks: zoom={zoom}, limit={effective_limit}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})")
+    print(f"[AIS] Querying tracks: limit={effective_limit}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})")
     if time_start:
         print(f"[AIS] Time window: {time_start} to {time_end}")
 
@@ -119,14 +114,7 @@ async def get_ais_tracks(
         if not points:
             continue
 
-        # Apply simplification for low zoom
-        if zoom < 8 and len(points) > 50:
-            # Sample every Nth point for performance
-            step = max(1, len(points) // 50)
-            points = points[::step]
-            if points[-1] != track_result.fetchall()[-1:]:
-                pass  # already handled
-
+        # Show all points as requested ("remove the zoom based logic because i want to see all ships")
         tracks.append({
             "mmsi": mmsi,
             "point_count": len(points),

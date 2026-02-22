@@ -8,6 +8,7 @@ interface VesselMarkerProps {
   showTrack: boolean;
   onClick: (vessel: Vessel) => void;
   zoom: number;
+  playbackTime: Date;
 }
 
 /* ===================== COMPONENT ===================== */
@@ -18,28 +19,51 @@ export const VesselMarker = ({
   showTrack,
   onClick,
   zoom,
+  playbackTime,
 }: VesselMarkerProps) => {
   // Fixed pixel size for marker
   const size = 32;
 
+  /* ===================== TIME-BASED OPACITY ===================== */
+
+  // New detections: 100% opacity
+  // Older detections (up to 24h): Fading out to 0%
+  const ageMs = playbackTime.getTime() - vessel.position.timestamp.getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+
+  let timeOpacity = 1;
+  if (ageHours > 0) {
+    // Linear fade from 1.0 at 0h to 0.0 at 24h
+    timeOpacity = Math.max(0, 1 - (ageHours / 24));
+  }
+
+  // If ship is too old (min opacity reached), remove from map
+  if (timeOpacity <= 0) return null;
+
   /* ===================== COLOR (HEX) ===================== */
 
-  const color =
-    vessel.mmsi === ''
-      ? '#94a3b8' // Gray for unidentified
-      : vessel.anomaly.type !== 'none'
-        ? anomalyTypeData[vessel.anomaly.type].color
+  const baseColor =
+    vessel.anomaly.type !== 'none'
+      ? anomalyTypeData[vessel.anomaly.type].color
+      : vessel.mmsi === ''
+        ? '#94a3b8'
         : vesselTypeData.ship.color;
+
+  // Make fresh detections pop more
+  const color = baseColor;
+  const strokeColor = baseColor;
+  const strokeWidth = isSelected ? 8 : (ageHours < 1 ? 6 : 4);
 
   /* ===================== ZOOM OPACITY ===================== */
 
-  const labelOpacity = zoom <= 8
+  // Labels fade away on zoom levels
+  const labelOpacity = (zoom <= 8
     ? 0
     : zoom === 9
       ? 0.4
       : zoom === 10
         ? 0.7
-        : 1;
+        : 1) * timeOpacity;
 
   /* ===================== SVG ARROW ICON ===================== */
 
@@ -66,9 +90,10 @@ export const VesselMarker = ({
           <polygon
             points="50,5 92,95 50,75 8,95"
             fill="${color}"
-            fill-opacity="${isSelected ? 0.9 : 0.65}"
-            stroke="${color}"
-            stroke-width="${isSelected ? 6 : 4}"
+            fill-opacity="${(isSelected ? 0.95 : 0.8) * timeOpacity}"
+            stroke="${strokeColor}"
+            stroke-width="${strokeWidth}"
+            stroke-opacity="${timeOpacity}"
           />
         </svg>
         <div style="
@@ -95,27 +120,41 @@ export const VesselMarker = ({
 
   /* ===================== TRACK ===================== */
 
+  // Only show tracks for correlated ships (those with an MMSI)
+  const isCorrelated = vessel.mmsi && vessel.mmsi.trim() !== '';
+  const shouldShowTrack = isCorrelated && (showTrack || isSelected);
+
   const trackPositions: [number, number][] = vessel.track.map(p => [
     p.lat,
     p.lng,
   ]);
 
+  // Add very small jitter based on numerical part of ID to separate perfectly overlapping markers (e.g. from same sensor)
+  const idNum = parseInt(vessel.id.split('-').pop() || '0', 16) || 0;
+  const jitterLat = ((idNum % 7) - 3) * 0.00008;
+  const jitterLng = (((idNum / 7) % 7) - 3) * 0.00008;
+
+  const position: [number, number] = [
+    vessel.position.lat + jitterLat,
+    vessel.position.lng + jitterLng
+  ];
+
   return (
     <>
-      {trackPositions.length > 1 && (
+      {shouldShowTrack && trackPositions.length > 1 && (
         <Polyline
           positions={trackPositions}
           pathOptions={{
             color,
-            weight: isSelected ? 3 : showTrack ? 2 : 1.5,
-            opacity: isSelected ? 0.9 : showTrack ? 0.6 : 0.35,
+            weight: isSelected ? 3 : 2,
+            opacity: (isSelected ? 0.9 : 0.6) * timeOpacity,
             dashArray: isSelected ? undefined : '4,4',
           }}
         />
       )}
 
       <Marker
-        position={[vessel.position.lat, vessel.position.lng]}
+        position={position}
         icon={icon}
         eventHandlers={{
           click: () => onClick(vessel),

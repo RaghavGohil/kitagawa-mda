@@ -112,10 +112,10 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
       <div className="flex flex-col gap-2">
         <p className="text-xs text-muted-foreground font-semibold">Identification</p>
 
-        <InfoRow icon={MapPin} label={`MMSI: ${vessel.mmsi}`} />
-        <InfoRow icon={Compass} label={`IMO: ${vessel.imo}`} />
-        <InfoRow icon={Ship} label={`Call Sign: ${vessel.callSign}`} />
-        <InfoRow icon={Anchor} label={`Flag: ${vessel.flag}`} />
+        <InfoRow icon={MapPin} label={`MMSI: ${vessel.mmsi || '-'}`} />
+        <InfoRow icon={Compass} label={`IMO: ${vessel.imo || '-'}`} />
+        <InfoRow icon={Ship} label={`Call Sign: ${vessel.callSign || '-'}`} />
+        <InfoRow icon={Anchor} label={`Flag: ${vessel.flag || '-'}`} />
 
         {vessel.imageName && (
           <div className="flex flex-col gap-1 mt-1">
@@ -133,11 +133,11 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
 
         <InfoRow
           icon={Gauge}
-          label={`Confidence: ${(vessel.anomaly.confidence * 100).toFixed(1)}%`}
+          label={`Confidence: ${vessel.anomaly.confidence ? (vessel.anomaly.confidence * 100).toFixed(1) + '%' : '-'}`}
         />
         <InfoRow
           icon={Clock}
-          label={`Detected: ${format(vessel.position.timestamp, 'dd MMM yyyy HH:mm')}`}
+          label={`Detected: ${vessel.position.timestamp ? format(vessel.position.timestamp, 'dd MMM yyyy HH:mm:ss') : '-'}`}
         />
         {vessel.track.length > 0 && (
           <InfoRow
@@ -155,17 +155,16 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
 
         <InfoRow
           icon={MapPin}
-          label={`Lat: ${vessel.position.lat.toFixed(4)}, Lng: ${vessel.position.lng.toFixed(4)}`}
+          label={`Lat: ${vessel.position.lat?.toFixed(4) || '-'}, Lng: ${vessel.position.lng?.toFixed(4) || '-'}`}
         />
         <InfoRow
           icon={Gauge}
-          label={`Speed: ${vessel.position.speed.toFixed(1)} kn, Heading: ${vessel.position.heading.toFixed(1)}°`}
+          label={`Speed: ${vessel.position.speed != null ? vessel.position.speed.toFixed(1) + ' kn' : '-'}, Heading: ${vessel.position.heading != null ? vessel.position.heading.toFixed(1) + '°' : '-'}`}
         />
-        <InfoRow icon={ArrowRight} label={`Destination: ${vessel.destination}`} />
+        <InfoRow icon={ArrowRight} label={`Destination: ${vessel.destination || '-'}`} />
         <InfoRow
           icon={Clock}
-          label={`ETA: ${vessel.eta ? format(vessel.eta, 'dd MMM yyyy HH:mm') : 'Unknown'
-            }`}
+          label={`ETA: ${vessel.eta ? format(vessel.eta, 'dd MMM yyyy HH:mm') : '-'}`}
         />
       </div>
 
@@ -175,9 +174,9 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
       <div className="flex flex-col gap-2">
         <p className="text-xs text-muted-foreground font-semibold">Dimensions</p>
 
-        <InfoRow icon={Anchor} label={`Length: ${vessel.length.toFixed(1)} m`} />
-        <InfoRow icon={Anchor} label={`Width: ${vessel.width.toFixed(1)} m`} />
-        <InfoRow icon={Anchor} label={`Draught: ${vessel.draught.toFixed(1)} m`} />
+        <InfoRow icon={Anchor} label={`Length: ${vessel.length ? vessel.length.toFixed(1) + ' m' : '-'}`} />
+        <InfoRow icon={Anchor} label={`Width: ${vessel.width ? vessel.width.toFixed(1) + ' m' : '-'}`} />
+        <InfoRow icon={Anchor} label={`Draught: ${vessel.draught ? vessel.draught.toFixed(1) + ' m' : '-'}`} />
       </div>
 
       <Separator className="my-2" />

@@ -112,23 +112,39 @@ async def get_detections(
         result = await db.execute(sql, params)
         rows = result.fetchall()
 
+        # Simple deduplication: if detections are within 0.0001 (approx 10m) of each other, 
+        # keep only the highest confidence one.
+        detections = []
+        for r in rows:
+            det = {
+                "id": r[0],
+                "image_name": r[1],
+                "sensor_type": r[2],
+                "confidence": round(r[3], 4),
+                "detection_datetime": r[4].isoformat() if r[4] else None,
+                "mmsi": r[5],
+                "lat": round(r[6], 6),
+                "lon": round(r[7], 6),
+                "pixel_bbox": [r[8], r[9], r[10], r[11]],
+            }
+            
+            # Check if this detection overlaps significantly with an already added one
+            is_duplicate = False
+            for existing in detections:
+                if abs(existing["lat"] - det["lat"]) < 0.0001 and abs(existing["lon"] - det["lon"]) < 0.0001:
+                    # If same image, it's definitely a duplicate or very close
+                    # If different images, it's a correlation that could be merged or hidden
+                    if det["image_name"] == existing["image_name"]:
+                        is_duplicate = True
+                        break
+            
+            if not is_duplicate:
+                detections.append(det)
+
         return {
             "type": "points",
             "zoom": zoom,
-            "detections": [
-                {
-                    "id": r[0],
-                    "image_name": r[1],
-                    "sensor_type": r[2],
-                    "confidence": round(r[3], 4),
-                    "detection_datetime": r[4].isoformat() if r[4] else None,
-                    "mmsi": r[5],
-                    "lat": round(r[6], 6),
-                    "lon": round(r[7], 6),
-                    "pixel_bbox": [r[8], r[9], r[10], r[11]],
-                }
-                for r in rows
-            ],
+            "detections": detections,
         }
 
 

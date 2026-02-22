@@ -14,12 +14,15 @@ export function useVessels(options?: {
   satelliteType?: "SAR" | "EO";
   limit?: number;
   offset?: number;
+  bounds?: { minLon: number; minLat: number; maxLon: number; maxLat: number };
+  zoom?: number;
 }) {
   return useQuery({
     queryKey: ["vessels", options],
     queryFn: () => fetchVessels(options),
-    staleTime: 30 * 1000, // 30 seconds
-    refetchInterval: 60 * 1000, // Refetch every minute
+    placeholderData: (previousData) => previousData,
+    staleTime: 10 * 1000, // 10 seconds
+    refetchInterval: 20 * 1000, // 20 seconds
   });
 }
 

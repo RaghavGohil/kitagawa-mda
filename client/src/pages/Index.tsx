@@ -26,7 +26,14 @@ import { useVessels, useVessel, useAlerts } from "@/hooks/useVessels";
 const Index = () => {
   /* ================= API DATA ================= */
 
-  const { data: vesselsData, isLoading: vesselsLoading, error } = useVessels({ limit: 500 });
+  const [mapBounds, setMapBounds] = useState<{ minLon: number; minLat: number; maxLon: number; maxLat: number } | undefined>();
+  const [mapZoom, setMapZoom] = useState(10);
+
+  const { data: vesselsData, isLoading: vesselsLoading, error } = useVessels({
+    limit: 2000,
+    bounds: mapBounds,
+    zoom: mapZoom
+  });
   const { data: alertsData, isLoading: alertsLoading } = useAlerts(50);
 
   const vessels = vesselsData?.vessels ?? [];
@@ -108,6 +115,34 @@ const Index = () => {
     setDrawerOpen(true);
   }, []);
 
+  const handleAlertClick = useCallback((alertVesselId: string) => {
+    // alertVesselId is like "unidentified-123" or "367692620" (MMSI)
+    // Vessel list IDs are like "vessel--123" or "vessel-367692620"
+    let targetId: string;
+    if (alertVesselId.startsWith('unidentified-')) {
+      const num = alertVesselId.replace('unidentified-', '');
+      targetId = `vessel--${num}`;
+    } else {
+      targetId = `vessel-${alertVesselId}`;
+    }
+
+    // Try to find the vessel in the already-loaded list
+    const found = vessels.find(v => v.id === targetId);
+    if (found) {
+      handleVesselSelect(found);
+    } else {
+      // Create a minimal stub so useVessel can fetch details
+      handleVesselSelect({
+        id: targetId,
+        mmsi: '',
+        name: alertVesselId,
+        position: { lat: 0, lng: 0, timestamp: new Date(), speed: 0, heading: 0, course: 0 },
+        track: [],
+        anomaly: { type: 'anomaly', confidence: 0, description: '' },
+      } as Vessel);
+    }
+  }, [vessels, handleVesselSelect]);
+
   useEffect(() => {
     if (!selectedVessel) setDrawerOpen(true);
   }, [selectedVessel]);
@@ -175,9 +210,13 @@ const Index = () => {
             showTracks={showTracks}
             visibleZoneTypes={visibleZoneTypes}
             playbackTime={playbackTime}
+            onViewChange={(bounds, zoom) => {
+              setMapBounds(bounds);
+              setMapZoom(zoom);
+            }}
           />
           {vesselsLoading && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-background/80 backdrop-blur-sm px-3 py-1.5 rounded-full border shadow-lg flex items-center gap-2">
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-background/80 backdrop-blur-sm px-3 py-1.5 rounded-full border shadow-lg flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               <span className="text-xs font-medium">Updating map data...</span>
             </div>
@@ -195,7 +234,7 @@ const Index = () => {
             <VesselInfoPanel vessel={enrichedVessel} isLoading={isDetailLoading} />
           ) : (
             <div className="flex flex-col space-y-2">
-              <Alerts alerts={alerts} isLoading={alertsLoading} />
+              <Alerts alerts={alerts} isLoading={alertsLoading} onAlertClick={handleAlertClick} />
               <LayerControl
                 visibleVesselTypes={visibleVesselTypes}
                 visibleAnomalyTypes={visibleAnomalyTypes}

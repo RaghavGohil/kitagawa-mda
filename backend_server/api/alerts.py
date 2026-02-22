@@ -30,12 +30,11 @@ async def get_alerts(
             SELECT 
                 d.id, 
                 d.mmsi, 
-                d.image_name, 
+                d.custom_name,
                 d.detection_datetime,
                 d.correlation_distance_m
             FROM detections d
-            WHERE d.mmsi IS NOT NULL
-              AND (d.correlation_distance_m > 500 OR d.correlation_distance_m IS NULL)
+            WHERE (d.correlation_distance_m > 500 OR d.correlation_distance_m IS NULL)
             ORDER BY d.detection_datetime DESC
             LIMIT :limit
         """),
@@ -45,10 +44,12 @@ async def get_alerts(
     
     alerts = []
     for r in rows:
+        mmsi = r[1]
+        custom_name = r[2]
         alerts.append({
             "id": f"alert-{r[0]}",
-            "vessel_id": str(r[1]),
-            "vessel_name": f"Vessel {r[1]}", # We don't have names in DB yet, so use MMSI
+            "vessel_id": str(mmsi) if mmsi else f"unidentified-{r[0]}",
+            "vessel_name": custom_name if custom_name else (f"Vessel {mmsi}" if mmsi else f"Unidentified {r[0]}"),
             "type": "anomaly",
             "timestamp": r[3].isoformat() if r[3] else None,
         })

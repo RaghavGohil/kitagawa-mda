@@ -309,6 +309,8 @@ async def _run_pipeline_task(image_names: list[str]):
                 await broadcast_status()
                 async with async_session() as db:
                     for det in detections:
+                        if det.confidence < 0.80:
+                            continue
                         await db.execute(
                             text("""
                                 INSERT INTO detections
@@ -516,8 +518,8 @@ async def start_background_ingest_polling():
                 else:
                     print("[Pipeline] Polling: Pipeline already running. Skipping trigger.", flush=True)
             else:
-                print("[Pipeline] Polling: No new products found. Waiting 60s...", flush=True)
-                await asyncio.sleep(60)
+                print("[Pipeline] Polling: No new products found. Waiting 1h...", flush=True)
+                await asyncio.sleep(3600)
                 continue
             
         except Exception as e:
@@ -525,5 +527,5 @@ async def start_background_ingest_polling():
             import traceback
             traceback.print_exc()
         
-        print("[Pipeline] Polling loop complete. Sleeping 60s...", flush=True)
-        await asyncio.sleep(60)
+        print("[Pipeline] Polling loop complete. Sleeping 1h...", flush=True)
+        await asyncio.sleep(3600)

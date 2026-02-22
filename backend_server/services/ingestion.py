@@ -369,20 +369,39 @@ async def _insert_ais_csv(
                 errors="coerce", utc=True,
             )
             chunk = chunk.dropna(subset=["base_date_time", "latitude", "longitude", "mmsi"])
+            
+            # SPATIAL FILTER: Limit to roughly Southern California to avoid disk full errors
+            chunk = chunk[
+                (chunk["longitude"] >= -121.0) & (chunk["longitude"] <= -115.0) &
+                (chunk["latitude"] >= 31.0) & (chunk["latitude"] <= 37.0)
+            ]
+            
             if chunk.empty:
                 continue
 
             # Batch insert using secure parameter binding
             batch_data = []
+            vessel_batch_data = {}
             for _, row in chunk.iterrows():
+                mmsi_val = int(row["mmsi"])
                 batch_data.append({
-                    "mmsi": int(row["mmsi"]),
+                    "mmsi": mmsi_val,
                     "ts": row["base_date_time"].to_pydatetime(),
                     "sog": float(row.get("sog", 0) or 0),
                     "cog": float(row.get("cog", 0) or 0),
                     "lon": float(row["longitude"]),
                     "lat": float(row["latitude"]),
                 })
+                
+                if "vessel_name" in row and pd.notna(row["vessel_name"]):
+                    vname = str(row["vessel_name"]).strip()
+                    if vname:
+                        vtype = str(row.get("vessel_type", "")).strip() if pd.notna(row.get("vessel_type", "")) else None
+                        vessel_batch_data[mmsi_val] = {
+                            "mmsi": mmsi_val,
+                            "vname": vname[:512],
+                            "vtype": vtype[:255] if vtype else None
+                        }
 
             if batch_data:
                 # Insert in sub-batches to avoid oversized queries
@@ -401,6 +420,22 @@ async def _insert_ais_csv(
                     )
                     await db.commit()
                     inserted += len(sub_batch)
+                    
+            if vessel_batch_data:
+                vessels_list = list(vessel_batch_data.values())
+                for i in range(0, len(vessels_list), 5000):
+                    sub_vessels = vessels_list[i : i + 5000]
+                    await db.execute(
+                        text("""
+                            INSERT INTO ais_vessels (mmsi, vessel_name, vessel_type)
+                            VALUES (:mmsi, :vname, :vtype)
+                            ON CONFLICT (mmsi) DO UPDATE SET
+                                vessel_name = COALESCE(EXCLUDED.vessel_name, ais_vessels.vessel_name),
+                                vessel_type = COALESCE(EXCLUDED.vessel_type, ais_vessels.vessel_type)
+                        """),
+                        sub_vessels
+                    )
+                    await db.commit()
 
     except Exception as e:
         await db.rollback()

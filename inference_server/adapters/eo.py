@@ -188,7 +188,7 @@ class EOAdapter(SensorAdapter):
         granule_duration = self.GRANULE_SIZE_KM / self.SENSOR_VELOCITY_KMS
         delta_seconds = frac * granule_duration
         det_time = sensing_time + timedelta(seconds=delta_seconds)
-        return det_time.strftime("%Y-%m-%dT%H:%M:%S")
+        return det_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ================================================================
     # Private helpers

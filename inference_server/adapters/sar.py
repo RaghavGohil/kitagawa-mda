@@ -310,6 +310,6 @@ class SARAdapter(SensorAdapter):
 
             dt = timedelta(seconds=float(dt_sec))
             t_interp = base + dt
-            return t_interp.strftime("%Y-%m-%dT%H:%M:%S")
+            return t_interp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         self._calib_cache[safe_name] = line_to_time

@@ -42,6 +42,7 @@ async def init_db():
         Detection,
         ImageChip,
         ProcessedImage,
+        AISVessel,
     )
     async with engine.begin() as conn:
         # Enable PostGIS extension

@@ -26,6 +26,7 @@ async def get_vessels(
     min_lat: Optional[float] = Query(None),
     max_lon: Optional[float] = Query(None),
     max_lat: Optional[float] = Query(None),
+    zoom: int = Query(10, ge=1, le=22),
     anomaly_only: bool = Query(False),
     satellite_type: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=2000),
@@ -51,36 +52,42 @@ async def get_vessels(
 
     where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
-    result = await db.execute(
-        text(f"""
-            SELECT
-                COALESCE(mmsi, -id) AS v_id,
-                COUNT(*) AS detection_count,
-                AVG(confidence) AS avg_confidence,
-                MAX(detection_datetime) AS last_seen,
-                AVG(ST_Y(geom)) AS lat,
-                AVG(ST_X(geom)) AS lon,
-                ARRAY_AGG(sensor_type) AS sensor_types
-            FROM detections
-            WHERE {where_str}
-            GROUP BY COALESCE(mmsi, -id)
-            ORDER BY last_seen DESC
-            LIMIT :limit
-        """),
-        params,
-    )
+    sql = text(f"""
+        SELECT
+            COALESCE(mmsi, -id) AS v_id,
+            COUNT(*) AS detection_count,
+            AVG(confidence) AS avg_confidence,
+            MAX(detection_datetime) AS last_seen,
+            AVG(ST_Y(geom)) AS lat,
+            AVG(ST_X(geom)) AS lon,
+            ARRAY_AGG(sensor_type) AS sensor_types,
+            AVG(correlation_distance_m) AS avg_dist,
+            MAX(custom_name) AS display_name,
+            MAX(COALESCE(mmsi, 0)) as real_mmsi
+        FROM detections
+        WHERE {where_str}
+        GROUP BY COALESCE(mmsi, -id)
+        ORDER BY last_seen DESC
+        LIMIT :limit
+    """)
+
+    result = await db.execute(sql, params)
     rows = result.fetchall()
 
     return {
         "vessels": [
             {
-                "mmsi": r[0],
+                "mmsi": r[9],  # Real MMSI (0 if uncorrelated)
+                "v_id": r[0],  # Unique grouping ID
+                "name": r[8] if r[8] else (f"Vessel {r[9]}" if r[9] != 0 else f"Unidentified {abs(r[0])}"),
                 "detection_count": r[1],
                 "avg_confidence": round(r[2], 4) if r[2] else None,
                 "last_seen": r[3].isoformat() if r[3] else None,
                 "lat": round(r[4], 6),
                 "lon": round(r[5], 6),
                 "sensor_types": list(set(r[6])) if r[6] else [],
+                "anomaly_type": "none" if (r[7] is not None and r[7] <= 750) else "anomaly",
+                "is_identified": r[9] > 0
             }
             for r in rows
         ],
@@ -135,7 +142,7 @@ async def get_vessel(
                 d.id, d.image_name, d.sensor_type, d.confidence,
                 d.detection_datetime, d.correlation_distance_m,
                 ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon,
-                ic.minio_key
+                ic.minio_key, d.custom_name
             FROM detections d
             LEFT JOIN image_chips ic ON ic.detection_id = d.id
             WHERE {where_clause}
@@ -144,6 +151,9 @@ async def get_vessel(
         {"mmsi_val": mmsi_val},
     )
     det_rows = det_result.fetchall()
+    
+    latest_dist = det_rows[0][5] if det_rows else None
+    anomaly_type = "none" if (latest_dist is not None and latest_dist <= 750) else "anomaly"
 
     # Latest AIS track snippet
     ais_result = await db.execute(
@@ -190,8 +200,11 @@ async def get_vessel(
     ]
 
     return {
-        "mmsi": mmsi,
+        "mmsi": mmsi_val if not is_unidentified else 0,
+        "v_id": mmsi, # This is the unique grouping key
+        "name": det_rows[0][9] if (det_rows and det_rows[0][9]) else (f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"),
         "detection_count": len(detections),
+        "anomaly_type": anomaly_type,
         "detections": detections,
         "recent_track": track,
     }

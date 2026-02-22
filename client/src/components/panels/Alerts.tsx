@@ -5,6 +5,7 @@ import { AnomalyType, anomalyTypeData } from '@/data/data';
 
 interface Alert {
   id: string;
+  vesselId: string;
   vesselName: string;
   type: AnomalyType;
   timestamp: Date;
@@ -14,6 +15,7 @@ interface RecentAlertsProps {
   alerts: Alert[];
   maxItems?: number;
   isLoading?: boolean;
+  onAlertClick?: (vesselId: string) => void;
 }
 
 /* ===================== LABELS ===================== */
@@ -29,6 +31,7 @@ export const Alerts = ({
   alerts,
   maxItems = 6,
   isLoading = false,
+  onAlertClick,
 }: RecentAlertsProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -79,6 +82,7 @@ export const Alerts = ({
                 text-xs
                 hover:bg-accent/40 cursor-pointer transition-colors
               "
+                onClick={() => onAlertClick?.(alert.vesselId)}
               >
                 {/* ===== Left ===== */}
                 <div className="flex items-center gap-2 min-w-0">

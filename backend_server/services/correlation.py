@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Config
 # ---------------------------------------------------------------------------
 INTERP_SECONDS = 120           # 2-minute interpolation step
-TIME_TOLERANCE_MINUTES = 5
-LOCATION_TOLERANCE_METERS = 750
+TIME_TOLERANCE_MINUTES = 15
+LOCATION_TOLERANCE_METERS = 2000
 BATCH_TRACKS = 200
 MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
@@ -62,10 +62,7 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
     det_lats = np.array([r[1] for r in det_rows], dtype=np.float64)
     det_lons = np.array([r[2] for r in det_rows], dtype=np.float64)
     det_times = pd.to_datetime([r[3] for r in det_rows], utc=True)
-    det_times_s = (
-        det_times.tz_localize(None).astype("int64") // 1_000_000_000
-    ).to_numpy(dtype=np.int64)
-
+    det_times_s = det_times.values.astype("datetime64[ns]").astype(np.int64) // 1_000_000_000
     best_dist = np.full(len(det_ids), np.inf, dtype=np.float64)
     best_mmsi = np.zeros(len(det_ids), dtype=np.int64)
 
@@ -82,22 +79,35 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
         if day_idx.size == 0:
             continue
 
+        day_lats = det_lats[day_mask]
+        day_lons = det_lons[day_mask]
         day_times = det_times[day_mask]
+        
         time_min = day_times.min() - time_tol
         time_max = day_times.max() + time_tol
 
-        # 3. Fetch AIS tracks from PostGIS for this time window
+        # Spatially filter AIS tracks to detections area + buffer
+        lat_min, lat_max = day_lats.min() - 0.2, day_lats.max() + 0.2
+        lon_min, lon_max = day_lons.min() - 0.2, day_lons.max() + 0.2
+
+        # 3. Fetch AIS tracks from PostGIS for this time window AND area
         ais_result = await db.execute(
             text("""
                 SELECT mmsi, timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
                        COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
                 FROM ais_tracks
                 WHERE timestamp BETWEEN :tmin AND :tmax
+                  AND geom && ST_MakeEnvelope(:lon_min, :lat_min, :lon_max, :lat_max, 4326)
                 ORDER BY mmsi, timestamp
             """),
-            {"tmin": time_min.to_pydatetime(), "tmax": time_max.to_pydatetime()},
+            {
+                "tmin": time_min.to_pydatetime(), "tmax": time_max.to_pydatetime(),
+                "lat_min": lat_min, "lat_max": lat_max,
+                "lon_min": lon_min, "lon_max": lon_max,
+            },
         )
         ais_rows = ais_result.fetchall()
+        print(f"[Correlation] Found {len(ais_rows)} AIS reports in AOI for {day}")
         if not ais_rows:
             continue
 
@@ -132,7 +142,11 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
             if not interp_results:
                 continue
 
-            # 5. Match detections
+            valid_interp = [r for r in interp_results if r is not None and len(r) > 0]
+            print(f"[Correlation] Batch {bstart//BATCH_TRACKS}: {len(valid_interp)}/{len(batch)} tracks interpolated")
+            
+            if not valid_interp:
+                continue
             d_lats = det_lats[day_idx]
             d_lons = det_lons[day_idx]
             d_times = det_times_s[day_idx]
@@ -149,27 +163,45 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
             best_dist[day_idx] = sub_dist
             best_mmsi[day_idx] = sub_mmsi
 
-        # Progress tracking
-        if progress_callback:
-            await progress_callback((i + 1) / len(unique_dates) * 100.0)
-
-    # 6. Update detections in PostGIS
+    # 6. Update detections in PostGIS with identity AND unique names
+    from shared.naming import get_unidentified_name
+    
     correlated = 0
     for i in range(len(det_ids)):
-        if best_mmsi[i] != 0:
+        mmsi = int(best_mmsi[i])
+        dist = float(best_dist[i])
+        det_id = int(det_ids[i])
+        
+        if mmsi != 0:
             await db.execute(
                 text("""
                     UPDATE detections
-                    SET mmsi = :mmsi, correlation_distance_m = :dist
+                    SET mmsi = :mmsi, 
+                        correlation_distance_m = :dist,
+                        custom_name = COALESCE(
+                            (SELECT vessel_name FROM ais_vessels WHERE mmsi = :mmsi AND vessel_name IS NOT NULL),
+                            'Vessel ' || CAST(:mmsi AS VARCHAR)
+                        )
                     WHERE id = :det_id
                 """),
                 {
-                    "mmsi": int(best_mmsi[i]),
-                    "dist": float(best_dist[i]),
-                    "det_id": int(det_ids[i]),
+                    "mmsi": mmsi,
+                    "dist": dist,
+                    "det_id": det_id,
                 },
             )
             correlated += 1
+        else:
+            # Assign unique name for unidentified vessel
+            u_name = get_unidentified_name(det_id)
+            await db.execute(
+                text("""
+                    UPDATE detections
+                    SET custom_name = :name
+                    WHERE id = :det_id
+                """),
+                {"name": u_name, "det_id": det_id}
+            )
 
     await db.commit()
     print(f"[Correlation] Correlated {correlated}/{len(det_ids)} detections.")
@@ -196,13 +228,18 @@ def _interpolate_track_physics(
         return pd.DataFrame()
 
     df = track_df.sort_values("base_date_time").reset_index(drop=True).copy()
+    
+    # Ensure columns exist
+    if "latitude" in df.columns and "lat" not in df.columns:
+        df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
+    
     df["base_date_time"] = pd.to_datetime(df["base_date_time"], utc=True, errors="coerce")
-    df = df.dropna(subset=["base_date_time", "latitude", "longitude"])
+    df = df.dropna(subset=["base_date_time", "lat", "lon"])
     if len(df) < 2:
         return pd.DataFrame()
 
-    lat_valid = df["latitude"].astype(float).to_numpy()
-    lon_valid = df["longitude"].astype(float).to_numpy()
+    lat_valid = df["lat"].astype(float).to_numpy()
+    lon_valid = df["lon"].astype(float).to_numpy()
     sog_valid = (
         df["sog"].astype(float).ffill().bfill().to_numpy()
         if "sog" in df.columns
@@ -215,9 +252,7 @@ def _interpolate_track_physics(
     )
 
     t = pd.to_datetime(df["base_date_time"], utc=True)
-    t_s = (t.dt.tz_localize(None).astype("int64") // 1_000_000_000).to_numpy(
-        dtype=np.int64
-    )
+    t_s = t.values.astype("datetime64[ns]").astype(np.int64) // 1_000_000_000
 
     t0, tn = int(t_s[0]), int(t_s[-1])
     if tn <= t0:
@@ -246,8 +281,8 @@ def _interpolate_track_physics(
     return pd.DataFrame(
         {
             "base_date_time": pd.to_datetime(t_interp, unit="s", utc=True),
-            "latitude": lat_interp,
-            "longitude": lon_interp,
+            "lat": lat_interp,
+            "lon": lon_interp,
             "mmsi": int(df["mmsi"].iloc[0]),
         }
     )
@@ -289,14 +324,12 @@ def _match_batch(
         if track is None or len(track) == 0:
             continue
         mmsi = int(track["mmsi"].iloc[0])
-        ais_lats = track["latitude"].to_numpy(dtype=float)
-        ais_lons = track["longitude"].to_numpy(dtype=float)
+        ais_lats = track["lat"].to_numpy(dtype=float)
+        ais_lons = track["lon"].to_numpy(dtype=float)
         ais_times_s = (
-            track["base_date_time"]
-            .dt.tz_localize(None)
-            .astype("int64")
+            track["base_date_time"].values.astype("datetime64[ns]").astype(np.int64)
             // 1_000_000_000
-        ).to_numpy(dtype=np.int64)
+        )
 
         tmin_lat, tmax_lat = float(np.min(ais_lats)), float(np.max(ais_lats))
         tmin_lon, tmax_lon = float(np.min(ais_lons)), float(np.max(ais_lons))
@@ -304,6 +337,7 @@ def _match_batch(
         lat_mask = (det_lats >= (tmin_lat - deg_lat_rad)) & (
             det_lats <= (tmax_lat + deg_lat_rad)
         )
+
         if not np.any(lat_mask):
             continue
         cand_idx = np.nonzero(lat_mask)[0]
