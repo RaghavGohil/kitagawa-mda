@@ -145,6 +145,10 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
             valid_interp = [r for r in interp_results if r is not None and len(r) > 0]
             print(f"[Correlation] Batch {bstart//BATCH_TRACKS}: {len(valid_interp)}/{len(batch)} tracks interpolated")
             
+            if progress_callback:
+                progress_pct = min(90.0, ((bstart + BATCH_TRACKS) / max(1, len(mmsi_groups))) * 90.0)
+                await progress_callback(progress_pct)
+            
             if not valid_interp:
                 continue
             d_lats = det_lats[day_idx]
@@ -203,8 +207,16 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
                 {"name": u_name, "det_id": det_id}
             )
 
+        if progress_callback and i % 50 == 0:
+            progress_pct = 90.0 + (i / max(1, len(det_ids))) * 10.0
+            await progress_callback(progress_pct)
+
     await db.commit()
     print(f"[Correlation] Correlated {correlated}/{len(det_ids)} detections.")
+    
+    if progress_callback:
+        await progress_callback(100.0)
+        
     return correlated
 
 

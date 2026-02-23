@@ -86,11 +86,13 @@ export function usePipelineStatus() {
             const prev = queryClient.getQueryData(["pipeline-status"]) as any;
             queryClient.setQueryData(["pipeline-status"], data);
 
-            // If we moved to a new image or finished a stage, refetch vessels
+            // If we moved to a new image, finished a stage, or changed overall status, refetch data
             if (data.current_image !== prev?.current_image ||
               data.current_stage !== prev?.current_stage ||
-              (data.status === 'idle' && prev?.status === 'running')) {
+              data.status !== prev?.status) {
               queryClient.invalidateQueries({ queryKey: ["vessels"] });
+              queryClient.invalidateQueries({ queryKey: ["alerts"] });
+              queryClient.invalidateQueries({ queryKey: ["stats"] });
             }
           } catch (err) {
             console.error("[WS] Data parse error", err);

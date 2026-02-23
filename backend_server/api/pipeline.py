@@ -239,22 +239,15 @@ async def _run_pipeline_task(image_names: list[str]):
         await loop.run_in_executor(None, download_landmask)
 
         _pipeline_status.progress = 0.2
-        _pipeline_status.message = "Starting AIS sync and image processing task..."
+        _pipeline_status.message = "Starting image processing..."
         _pipeline_status.current_stage = "Initialization"
         await broadcast_status()
-        
-        # Start AIS ingestion as a background task
-        async def run_ais_task():
-            async with async_session() as db:
-                await download_and_ingest_ais(image_names, db)
-        
-        ais_task = asyncio.create_task(run_ais_task())
 
         # Step 2: Per-image processing
-        # Each image gets a portion of the 0.2 to 0.8 range (60% total)
+        # Each image gets a portion of the 0.2 to 0.9 range (70% total)
         global _current_base_total, _current_image_weight
         images_to_process = image_names
-        _current_image_weight = 0.6 / max(1, len(images_to_process))
+        _current_image_weight = 0.7 / max(1, len(images_to_process))
         
         for i, image_name in enumerate(images_to_process):
             _current_base_total = 0.2 + i * _current_image_weight
@@ -345,7 +338,7 @@ async def _run_pipeline_task(image_names: list[str]):
                     await db.commit()
 
             # Generate Chips (while image is still on disk)
-            _pipeline_status.progress = _current_base_total + _current_image_weight * 0.98
+            _pipeline_status.progress = _current_base_total + _current_image_weight * 0.70
             _pipeline_status.current_stage = "Generating Map Chips"
             await broadcast_status()
             async with async_session() as db:
@@ -360,6 +353,33 @@ async def _run_pipeline_task(image_names: list[str]):
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             
+            # AIS Sync for this image
+            _pipeline_status.progress = _current_base_total + _current_image_weight * 0.80
+            _pipeline_status.message = f"Syncing AIS data for {image_name}..."
+            _pipeline_status.current_stage = "AIS Sync"
+            await broadcast_status()
+            try:
+                async with async_session() as db:
+                    await download_and_ingest_ais([image_name], db)
+            except Exception as ae:
+                print(f"[Pipeline] AIS sync error for {image_name}: {ae}")
+
+            # Correlation for this image
+            _pipeline_status.progress = _current_base_total + _current_image_weight * 0.90
+            _pipeline_status.message = f"Correlating AIS data for {image_name}..."
+            _pipeline_status.current_stage = "AIS Correlation"
+            _pipeline_status.correlation_progress = 0.0
+            await broadcast_status()
+            
+            async def _local_correlation_progress(pct: float):
+                _pipeline_status.correlation_progress = pct
+                # Map correlation portion (0.9 to 1.0 of this image's weight)
+                _pipeline_status.progress = _current_base_total + _current_image_weight * (0.90 + (pct / 100.0) * 0.10)
+                await broadcast_status()
+
+            async with async_session() as db:
+                correlated = await run_correlation(db, progress_callback=_local_correlation_progress)
+
             _pipeline_status.processed_images.append(image_name)
             _pipeline_status.progress = _current_base_total + _current_image_weight # Mark as completely done
             await broadcast_status()
@@ -372,32 +392,9 @@ async def _run_pipeline_task(image_names: list[str]):
                 )
                 await db.commit()
 
-        # Step 5: Correlation
-        # Wait for the AIS ingestion task to complete if it was started
-        try:
-            if 'ais_task' in locals():
-                _pipeline_status.message = "Ensuring AIS sync is complete..."
-                await broadcast_status()
-                await ais_task
-        except Exception as ae:
-            print(f"[Pipeline] AIS task background error: {ae}")
-            # We don't fail the whole pipeline if AIS ingestion partially failed,
-            # as some AIS data might still be present.
-
-        _pipeline_status.progress = 0.8
-        _pipeline_status.message = "Running AIS correlation..."
-        _pipeline_status.current_stage = "AIS Correlation"
-        _pipeline_status.correlation_progress = 0.0
-        await broadcast_status()
-        async with async_session() as db:
-            correlated = await run_correlation(db, progress_callback=_on_correlation_progress)
-        _pipeline_status.correlation_progress = 100.0
-        _pipeline_status.progress = 0.9
-        await broadcast_status()
-
-        # Step 6: Chips
-        _pipeline_status.progress = 0.9
-        _pipeline_status.message = "Generating thumbnails..."
+        # Step 6: Global thumbnail update at the very end
+        _pipeline_status.progress = 0.95
+        _pipeline_status.message = "Updating thumbnails..."
         _pipeline_status.current_stage = "Thumbnail Generation"
         _pipeline_status.chips_progress = 0.0
         await broadcast_status()

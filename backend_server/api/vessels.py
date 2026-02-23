@@ -53,21 +53,35 @@ async def get_vessels(
     where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
     sql = text(f"""
-        SELECT
-            COALESCE(mmsi, -id) AS v_id,
-            COUNT(*) AS detection_count,
-            AVG(confidence) AS avg_confidence,
-            MAX(detection_datetime) AS last_seen,
-            AVG(ST_Y(geom)) AS lat,
-            AVG(ST_X(geom)) AS lon,
-            ARRAY_AGG(sensor_type) AS sensor_types,
-            AVG(correlation_distance_m) AS avg_dist,
-            MAX(custom_name) AS display_name,
-            MAX(COALESCE(mmsi, 0)) as real_mmsi
-        FROM detections
-        WHERE {where_str}
-        GROUP BY COALESCE(mmsi, -id)
-        ORDER BY last_seen DESC
+        WITH grouped_detections AS (
+            SELECT
+                COALESCE(mmsi, -id) AS v_id,
+                COUNT(*) AS detection_count,
+                AVG(confidence) AS avg_confidence,
+                MAX(detection_datetime) AS last_seen,
+                AVG(ST_Y(geom)) AS lat,
+                AVG(ST_X(geom)) AS lon,
+                ARRAY_AGG(sensor_type) AS sensor_types,
+                AVG(correlation_distance_m) AS avg_dist,
+                MAX(custom_name) AS display_name,
+                MAX(COALESCE(mmsi, 0)) as real_mmsi
+            FROM detections
+            WHERE {where_str}
+            GROUP BY COALESCE(mmsi, -id)
+        )
+        SELECT 
+            gd.*,
+            lat_ais.sog as ais_sog,
+            lat_ais.cog as ais_cog
+        FROM grouped_detections gd
+        LEFT JOIN LATERAL (
+            SELECT sog, cog
+            FROM ais_tracks a
+            WHERE a.mmsi = gd.real_mmsi AND gd.real_mmsi > 0
+            ORDER BY ABS(EXTRACT(EPOCH FROM (a.timestamp - gd.last_seen))) ASC
+            LIMIT 1
+        ) lat_ais ON true
+        ORDER BY gd.last_seen DESC
         LIMIT :limit
     """)
 
@@ -87,7 +101,9 @@ async def get_vessels(
                 "lon": round(r[5], 6),
                 "sensor_types": list(set(r[6])) if r[6] else [],
                 "anomaly_type": "none" if (r[7] is not None and r[7] <= 750) else "anomaly",
-                "is_identified": r[9] > 0
+                "is_identified": r[9] > 0,
+                "sog": round(r.ais_sog, 2) if r.ais_sog else None,
+                "cog": round(r.ais_cog, 2) if r.ais_cog else None
             }
             for r in rows
         ],

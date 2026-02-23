@@ -4,17 +4,17 @@ import { API_BASE_URL } from '@/lib/api';
 
 interface AISTrack {
     mmsi: number;
-    points: { lat: number; lon: number }[];
+    points: { lat: number; lon: number, timestamp: string }[];
 }
 
 export const AISTrackLayer = ({
     show,
     playbackTime,
-    correlatedMmsis = []
+    correlatedVessels = []
 }: {
     show: boolean;
     playbackTime: Date;
-    correlatedMmsis?: number[];
+    correlatedVessels?: { mmsi: number, lat: number, lon: number, detectionTime: number }[];
 }) => {
     const [tracks, setTracks] = useState<AISTrack[]>([]);
     const map = useMap();
@@ -22,7 +22,7 @@ export const AISTrackLayer = ({
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const fetchTracks = useCallback(async () => {
-        if (!show || correlatedMmsis.length === 0) {
+        if (!show || correlatedVessels.length === 0) {
             setTracks([]);
             return;
         }
@@ -37,7 +37,7 @@ export const AISTrackLayer = ({
         // Define a 48-hour window for better continuity
         const time_start = new Date(roundedTimeMs - 24 * 60 * 60 * 1000).toISOString();
         const time_end = new Date(roundedTimeMs + 24 * 60 * 60 * 1000).toISOString();
-        const mmsisStr = correlatedMmsis.join(',');
+        const mmsisStr = correlatedVessels.map(v => v.mmsi).join(',');
 
         const paramsStr = `${bounds.toBBoxString()}-${zoom}-${time_start}-${time_end}-${mmsisStr}`;
         if (paramsStr === lastFetchParams.current) return;
@@ -71,7 +71,7 @@ export const AISTrackLayer = ({
             if (err.name === 'AbortError') return;
             console.error("Failed to fetch AIS tracks:", err);
         }
-    }, [map, show, playbackTime, correlatedMmsis.join(',')]);
+    }, [map, show, playbackTime, correlatedVessels.map(v => v.mmsi).join(',')]);
 
     useMapEvent('moveend', fetchTracks);
 
@@ -87,35 +87,86 @@ export const AISTrackLayer = ({
     if (!show) return null;
 
     // Filter tracks to only show those that belong to a currently visible identified vessel
-    const filteredTracks = tracks.filter(t => correlatedMmsis.includes(t.mmsi));
+    // and limit to recent ~15 points to avoid clutter, rendering as fading segments
+    const vesselMap = new Map(correlatedVessels.map(v => [v.mmsi, v]));
+    const filteredTracks = tracks
+        .filter(t => vesselMap.has(t.mmsi))
+        .map(t => {
+            const vessel = vesselMap.get(t.mmsi)!;
+
+            // Find closest point to detection time
+            let closestIdx = -1;
+            let minDiff = Infinity;
+
+            t.points.forEach((p, idx) => {
+                if (!p.timestamp) return;
+                const pTime = new Date(p.timestamp).getTime();
+                const diff = Math.abs(pTime - vessel.detectionTime);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestIdx = idx;
+                }
+            });
+
+            if (closestIdx === -1) {
+                // Fallback to recent points if no timestamps match
+                return { ...t, points: t.points.slice(-21), centerIdx: 10 };
+            }
+
+            // Take 10 points before, and 10 after
+            const startIdx = Math.max(0, closestIdx - 10);
+            const endIdx = Math.min(t.points.length, closestIdx + 11);
+
+            const slicedPoints = t.points.slice(startIdx, endIdx);
+            const newCenterIdx = closestIdx - startIdx;
+
+            return { ...t, points: slicedPoints, centerIdx: newCenterIdx };
+        });
 
     return (
         <>
             {filteredTracks.map((track) => (
                 <div key={`track-group-${track.mmsi}`}>
-                    <Polyline
-                        positions={track.points.map(p => [p.lat, p.lon])}
-                        pathOptions={{
-                            color: '#10b981', // Dimmer Emerald
-                            weight: 1.5,
-                            opacity: 0.4,
-                            interactive: false,
-                        }}
-                    />
-                    {track.points.map((p, idx) => (
-                        <CircleMarker
-                            key={`ais-pt-${track.mmsi}-${idx}`}
-                            center={[p.lat, p.lon]}
-                            radius={2}
-                            pathOptions={{
-                                color: '#10b981',
-                                fillColor: '#10b981',
-                                fillOpacity: 0.6,
-                                stroke: false,
-                                interactive: false,
-                            }}
-                        />
-                    ))}
+                    {/* Render segments between points so they fade out from the center detection point */}
+                    {track.points.map((p, idx) => {
+                        const nextP = track.points[idx + 1];
+
+                        // Calculate fade based on distance from the center detection point
+                        // 0 at ends, 1 at center
+                        const distFromCenter = Math.abs(idx - track.centerIdx);
+                        const maxDist = 10;
+                        const fadeFactor = Math.max(0, 1 - (distFromCenter / maxDist));
+
+                        const fadeOpacity = 0.15 + fadeFactor * 0.75; // 0.15 to 0.90
+
+
+                        return (
+                            <div key={`ais-seg-${track.mmsi}-${idx}`}>
+                                <CircleMarker
+                                    center={[p.lat, p.lon]}
+                                    radius={2}
+                                    pathOptions={{
+                                        color: '#34d399', // Emerald 400
+                                        fillColor: '#34d399',
+                                        fillOpacity: fadeOpacity,
+                                        stroke: false,
+                                        interactive: false,
+                                    }}
+                                />
+                                {nextP && (
+                                    <Polyline
+                                        positions={[[p.lat, p.lon], [nextP.lat, nextP.lon]]}
+                                        pathOptions={{
+                                            color: '#34d399',
+                                            weight: 2,
+                                            opacity: fadeOpacity * 0.8, // Slightly more transparent than the circle
+                                            interactive: false,
+                                        }}
+                                    />
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             ))}
         </>

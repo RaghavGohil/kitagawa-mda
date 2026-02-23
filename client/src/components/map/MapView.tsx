@@ -149,7 +149,14 @@ export const MapView = ({
       <AISTrackLayer
         show={showTracks}
         playbackTime={playbackTime}
-        correlatedMmsis={vessels.map(v => parseInt(v.mmsi)).filter(m => m > 0)}
+        correlatedVessels={vessels
+          .filter(v => parseInt(v.mmsi) > 0 && v.position?.lat != null && v.position?.lng != null)
+          .map(v => ({
+            mmsi: parseInt(v.mmsi),
+            lat: v.position.lat,
+            lon: v.position.lng,
+            detectionTime: v.position.timestamp.getTime()
+          }))}
       />
 
       {/* Vessels */}
