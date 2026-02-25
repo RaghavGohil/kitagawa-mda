@@ -53,8 +53,8 @@ async def lifespan(app: FastAPI):
     landmask_path = os.path.join(MASK_DIR, "GSHHS_shp", "f", "GSHHS_f_L1.shp")
     cloudmask_dir = os.path.join("inference_server", "filters")
     _filter_pipeline = FilterPipeline(
-        landmask_shp_path=landmask_path if os.path.exists(landmask_path) else None,
-        cloudmask_model_dir=cloudmask_dir if os.path.isdir(cloudmask_dir) else None,
+        landmask_shp_path=landmask_path,
+        cloudmask_model_dir=cloudmask_dir,
     )
 
     print("[Inference Server] Models loaded. Ready to serve.")

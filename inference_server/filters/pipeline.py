@@ -39,11 +39,8 @@ class FilterPipeline:
         self._cloudmask_model = None
         self._cloudmask_device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        if landmask_shp_path and os.path.exists(landmask_shp_path):
-            self._load_landmask(landmask_shp_path)
-
-        if cloudmask_model_dir and os.path.isdir(cloudmask_model_dir):
-            self._load_cloudmask(cloudmask_model_dir)
+        self._landmask_shp_path = landmask_shp_path
+        self._cloudmask_model_dir = cloudmask_model_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -62,16 +59,24 @@ class FilterPipeline:
         if apply_nms:
             detections = self._nms_filter(detections)
 
-        if apply_landmask and self._land_gdf is not None:
-            detections = self._landmask_filter(detections)
+        if apply_landmask:
+            if self._land_gdf is None and self._landmask_shp_path and os.path.exists(self._landmask_shp_path):
+                self._load_landmask(self._landmask_shp_path)
+            
+            if self._land_gdf is not None:
+                detections = self._landmask_filter(detections)
 
-        if apply_cloudmask and self._cloudmask_model is not None:
-            # Cloudmask only applies to EO detections
-            eo_dets = [d for d in detections if d.sensor_type == SensorType.EO]
-            non_eo = [d for d in detections if d.sensor_type != SensorType.EO]
-            if eo_dets:
-                eo_dets = self._cloudmask_filter(eo_dets)
-            detections = non_eo + eo_dets
+        if apply_cloudmask:
+            if self._cloudmask_model is None and self._cloudmask_model_dir and os.path.isdir(self._cloudmask_model_dir):
+                self._load_cloudmask(self._cloudmask_model_dir)
+
+            if self._cloudmask_model is not None:
+                # Cloudmask only applies to EO detections
+                eo_dets = [d for d in detections if d.sensor_type == SensorType.EO]
+                non_eo = [d for d in detections if d.sensor_type != SensorType.EO]
+                if eo_dets:
+                    eo_dets = self._cloudmask_filter(eo_dets)
+                detections = non_eo + eo_dets
 
         return detections
 

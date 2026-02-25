@@ -13,10 +13,10 @@ import { Alerts } from "@/components/panels/Alerts";
 import {
   Vessel,
   Alert,
-  anomalyTypeData,
-  AnomalyType,
-  VesselType,
   vesselTypeData,
+  anomalyTypeData,
+  VesselType,
+  AnomalyType,
   ZoneType,
   zoneTypeData,
 } from "@/data/data";
@@ -73,9 +73,9 @@ const Index = () => {
     () => new Set(allVesselTypes),
   );
 
-  const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<
-    Set<AnomalyType>
-  >(() => new Set(allAnomalyTypes));
+  const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<Set<AnomalyType>>(
+    () => new Set(allAnomalyTypes),
+  );
 
   const [visibleZoneTypes, setVisibleZoneTypes] = useState<Set<ZoneType>>(
     () => new Set(), // Start with all zones hidden
@@ -150,9 +150,11 @@ const Index = () => {
   /* ================= FILTERED VESSELS ================= */
 
   const visibleVessels = useMemo(() => {
-    return filteredVessels
-      .filter((v) => visibleVesselTypes.has(v.type))
-      .filter((v) => visibleAnomalyTypes.has(v.anomaly.type));
+    return filteredVessels.filter(
+      (v) =>
+        visibleVesselTypes.has(v.type) &&
+        visibleAnomalyTypes.has(v.anomaly.type),
+    );
   }, [filteredVessels, visibleVesselTypes, visibleAnomalyTypes]);
 
   // Filter by playback time

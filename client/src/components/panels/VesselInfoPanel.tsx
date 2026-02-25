@@ -10,7 +10,7 @@ import {
   ArrowRight,
   Loader2,
 } from 'lucide-react';
-import { Vessel, vesselTypeData } from '@/data/data';
+import { Vessel } from '@/data/data';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';

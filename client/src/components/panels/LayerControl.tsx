@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Layers, Ship, TriangleAlert, MapPin, Route, ChevronDown, ChevronUp } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import {
+  vesselTypeData,
   anomalyTypeData,
+  VesselType,
   AnomalyType,
   zoneTypeData,
-  VesselType,
   ZoneType,
-  vesselTypeData,
 } from '@/data/data';
 
 interface LayerControlProps {
@@ -17,7 +17,7 @@ interface LayerControlProps {
   showTracks: boolean;
   onVesselTypesToggle: (type: VesselType) => void;
   onAnomalyTypesToggle: (type: AnomalyType) => void;
-  onZoneTypesToggle: (type: string) => void;
+  onZoneTypesToggle: (type: ZoneType) => void;
   onShowTracksChange: (show: boolean) => void;
 }
 
@@ -59,13 +59,13 @@ export const LayerControl = ({
               className="flex w-full justify-between text-xs uppercase text-muted-foreground"
             >
               <div className="flex items-center gap-2">
-                <TriangleAlert className="h-3.5 w-3.5" />
-                Vessel Types
+                <Ship className="h-3.5 w-3.5" />
+                Identification Status
               </div>
-              {vesselTypesExpanded? <ChevronUp /> : <ChevronDown />}
+              {vesselTypesExpanded ? <ChevronUp /> : <ChevronDown />}
             </button>
 
-            {vesselTypesExpanded&&
+            {vesselTypesExpanded &&
               Object.entries(vesselTypeData).map(([id, meta]) => (
                 <label
                   key={id}
@@ -80,15 +80,13 @@ export const LayerControl = ({
                   </div>
                   <Switch
                     checked={visibleVesselTypes.has(id as VesselType)}
-                    onCheckedChange={() =>
-                      onVesselTypesToggle(id as VesselType)
-                    }
+                    onCheckedChange={() => onVesselTypesToggle(id as VesselType)}
                     className="scale-75"
                   />
                 </label>
               ))}
           </div>
-          
+
           {/* ===== Anomaly Types ===== */}
           <div className="px-3 py-3 space-y-2">
             <button
@@ -99,10 +97,10 @@ export const LayerControl = ({
                 <TriangleAlert className="h-3.5 w-3.5" />
                 Anomaly Types
               </div>
-              {anomalyTypesExpanded? <ChevronUp /> : <ChevronDown />}
+              {anomalyTypesExpanded ? <ChevronUp /> : <ChevronDown />}
             </button>
 
-            {anomalyTypesExpanded&&
+            {anomalyTypesExpanded &&
               Object.entries(anomalyTypeData).map(([id, meta]) => (
                 <label
                   key={id}
@@ -117,9 +115,7 @@ export const LayerControl = ({
                   </div>
                   <Switch
                     checked={visibleAnomalyTypes.has(id as AnomalyType)}
-                    onCheckedChange={() =>
-                      onAnomalyTypesToggle(id as AnomalyType)
-                    }
+                    onCheckedChange={() => onAnomalyTypesToggle(id as AnomalyType)}
                     className="scale-75"
                   />
                 </label>

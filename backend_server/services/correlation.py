@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Config
 # ---------------------------------------------------------------------------
 INTERP_SECONDS = 120           # 2-minute interpolation step
-TIME_TOLERANCE_MINUTES = 15
-LOCATION_TOLERANCE_METERS = 2000
+TIME_TOLERANCE_MINUTES = 5
+LOCATION_TOLERANCE_METERS = 500
 BATCH_TRACKS = 200
 MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+
 import {
   Select,
   SelectContent,
@@ -14,7 +15,7 @@ import {
 } from '@/components/ui/select';
 import { RangeSlider } from '@/components/ui/range-slider';
 
-import { anomalyTypeData, Vessel, vesselTypeData } from '@/data/data';
+import { vesselTypeData, anomalyTypeData, Vessel } from '@/data/data';
 
 /* ===================== TYPES ===================== */
 
@@ -24,9 +25,7 @@ interface SearchFilterPanelProps {
   onVesselSelect: (vessel: Vessel) => void;
 }
 
-/* ===================== FILTER OPTIONS ===================== */
-
-const vesselTypes = [
+const vesselTypeOptions = [
   { value: 'dont-apply', label: 'Don\'t Apply' },
   ...Object.entries(vesselTypeData).map(([key, data]) => ({
     value: key,
@@ -34,7 +33,7 @@ const vesselTypes = [
   })),
 ];
 
-const anomalyTypes = [
+const anomalyTypeOptions = [
   { value: 'dont-apply', label: 'Don\'t Apply' },
   ...Object.entries(anomalyTypeData).map(([key, data]) => ({
     value: key,
@@ -79,10 +78,15 @@ export const SearchFilterPanel = ({
       filtered = filtered.filter(v => v.type === vesselTypeFilter);
     }
 
-    if (anomalyTypeFilter === 'none') {
-      filtered = filtered.filter(v => v.anomaly.type !== 'anomaly');
-    } else if (anomalyTypeFilter !== 'dont-apply') {
+    if (anomalyTypeFilter !== 'dont-apply') {
       filtered = filtered.filter(v => v.anomaly.type === anomalyTypeFilter);
+    }
+
+    if (speedRange[0] > minSpeed || speedRange[1] < maxSpeed) {
+      filtered = filtered.filter(v => {
+        const speed = v.position.speed ?? 0;
+        return speed >= speedRange[0] && speed <= speedRange[1];
+      });
     }
 
     onFilteredVessels(filtered);
@@ -144,7 +148,7 @@ export const SearchFilterPanel = ({
         {searchResults.length > 0 && (
           <div className="mt-2 space-y-1">
             {searchResults.map(vessel => {
-              const anomalyMeta = anomalyTypeData[vessel.anomaly.type];
+              const anomalyMeta = vessel.type === 'ship' ? undefined : (vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'] : anomalyTypeData['none']);
 
               return (
                 <button
@@ -162,7 +166,7 @@ export const SearchFilterPanel = ({
                     </div>
                   </div>
 
-                  {vessel.anomaly.type !== 'none' && (
+                  {vessel.type === 'unidentified' && (
                     <Badge
                       variant="outline"
                       className="text-[10px]"
@@ -171,7 +175,7 @@ export const SearchFilterPanel = ({
                         color: anomalyMeta?.color ?? '#FACC15',
                       }}
                     >
-                      {anomalyMeta?.label ?? 'Anomaly'}
+                      {anomalyMeta?.label ?? 'Unidentified'}
                     </Badge>
                   )}
                 </button>
@@ -211,7 +215,7 @@ export const SearchFilterPanel = ({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {vesselTypes.map(v => (
+                {vesselTypeOptions.map(v => (
                   <SelectItem key={v.value} value={v.value}>
                     {v.label}
                   </SelectItem>
@@ -222,15 +226,15 @@ export const SearchFilterPanel = ({
 
           {/* Anomaly Type */}
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Anomaly</label>
+            <label className="text-xs text-muted-foreground">Anomaly Type</label>
             <Select value={anomalyTypeFilter} onValueChange={setAnomalyTypeFilter}>
               <SelectTrigger className="bg-muted/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {anomalyTypes.map(a => (
-                  <SelectItem key={a.value} value={a.value}>
-                    {a.label}
+                {anomalyTypeOptions.map(v => (
+                  <SelectItem key={v.value} value={v.value}>
+                    {v.label}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -8,9 +8,22 @@ by their correlated MMSI for a vessel-centric map view.
 from __future__ import annotations
 
 import io
+import math
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+
+def _safe_round(val, ndigits):
+    if val is None:
+        return None
+    try:
+        f_val = float(val)
+        if math.isnan(f_val) or math.isinf(f_val):
+            return None
+        return round(f_val, ndigits)
+    except (ValueError, TypeError):
+        return None
+
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,7 +85,13 @@ async def get_vessels(
         SELECT 
             gd.*,
             lat_ais.sog as ais_sog,
-            lat_ais.cog as ais_cog
+            lat_ais.cog as ais_cog,
+            EXISTS(
+                SELECT 1 FROM ais_tracks a 
+                WHERE a.timestamp >= DATE_TRUNC('day', gd.last_seen) 
+                  AND a.timestamp < DATE_TRUNC('day', gd.last_seen) + INTERVAL '1 day'
+                LIMIT 1
+            ) as ais_present
         FROM grouped_detections gd
         LEFT JOIN LATERAL (
             SELECT sog, cog
@@ -95,15 +114,15 @@ async def get_vessels(
                 "v_id": r[0],  # Unique grouping ID
                 "name": r[8] if r[8] else (f"Vessel {r[9]}" if r[9] != 0 else f"Unidentified {abs(r[0])}"),
                 "detection_count": r[1],
-                "avg_confidence": round(r[2], 4) if r[2] else None,
+                "avg_confidence": _safe_round(r[2], 4),
                 "last_seen": r[3].isoformat() if r[3] else None,
-                "lat": round(r[4], 6),
-                "lon": round(r[5], 6),
+                "lat": _safe_round(r[4], 6),
+                "lon": _safe_round(r[5], 6),
                 "sensor_types": list(set(r[6])) if r[6] else [],
-                "anomaly_type": "none" if (r[7] is not None and r[7] <= 750) else "anomaly",
+                "anomaly_type": "none" if r[9] > 0 else ("anomaly" if r.ais_present else "none"),
                 "is_identified": r[9] > 0,
-                "sog": round(r.ais_sog, 2) if r.ais_sog else None,
-                "cog": round(r.ais_cog, 2) if r.ais_cog else None
+                "sog": _safe_round(r.ais_sog, 2),
+                "cog": _safe_round(r.ais_cog, 2)
             }
             for r in rows
         ],
@@ -168,8 +187,28 @@ async def get_vessel(
     )
     det_rows = det_result.fetchall()
     
-    latest_dist = det_rows[0][5] if det_rows else None
-    anomaly_type = "none" if (latest_dist is not None and latest_dist <= 750) else "anomaly"
+    # Check if AIS data is present for the day of the first detection
+    ais_present = False
+    if det_rows and det_rows[0][4]:
+        det_date = det_rows[0][4].date()
+        import datetime
+        dt_start = datetime.datetime.combine(det_date, datetime.time.min)
+        dt_end = dt_start + datetime.timedelta(days=1)
+        
+        ais_check = await db.execute(
+            text("""
+                SELECT 1 FROM ais_tracks
+                WHERE timestamp >= :dt_start AND timestamp < :dt_end
+                LIMIT 1
+            """),
+            {
+                "dt_start": dt_start,
+                "dt_end": dt_end
+            }
+        )
+        ais_present = ais_check.fetchone() is not None
+
+    anomaly_type = "none" if not is_unidentified else ("anomaly" if ais_present else "none")
 
     # Latest AIS track snippet
     ais_result = await db.execute(
@@ -196,21 +235,21 @@ async def get_vessel(
             "id": r[0],
             "image_name": r[1],
             "sensor_type": r[2],
-            "confidence": round(r[3], 4),
+            "confidence": _safe_round(r[3], 4),
             "detection_datetime": r[4].isoformat() if r[4] else None,
-            "correlation_distance_m": round(r[5], 2) if r[5] else None,
-            "lat": round(r[6], 6),
-            "lon": round(r[7], 6),
+            "correlation_distance_m": _safe_round(r[5], 2),
+            "lat": _safe_round(r[6], 6),
+            "lon": _safe_round(r[7], 6),
             "chip_url": chip_url,
         })
 
     track = [
         {
             "timestamp": p[0].isoformat() if p[0] else None,
-            "lat": round(p[1], 6),
-            "lon": round(p[2], 6),
-            "sog": round(p[3], 2),
-            "cog": round(p[4], 2),
+            "lat": _safe_round(p[1], 6),
+            "lon": _safe_round(p[2], 6),
+            "sog": _safe_round(p[3], 2),
+            "cog": _safe_round(p[4], 2),
         }
         for p in ais_rows
     ]

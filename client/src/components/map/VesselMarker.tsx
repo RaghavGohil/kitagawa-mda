@@ -1,6 +1,6 @@
 import { Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { anomalyTypeData, Vessel, vesselTypeData } from '@/data/data';
+import { anomalyTypeData, vesselTypeData, Vessel } from '@/data/data';
 
 interface VesselMarkerProps {
   vessel: Vessel;
@@ -43,11 +43,9 @@ export const VesselMarker = ({
   /* ===================== COLOR (HEX) ===================== */
 
   const baseColor =
-    vessel.anomaly.type !== 'none'
-      ? anomalyTypeData[vessel.anomaly.type].color
-      : vessel.mmsi === ''
-        ? '#94a3b8'
-        : vesselTypeData.ship.color;
+    vessel.type === 'ship' ? vesselTypeData['ship'].color :
+      vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'].color :
+        anomalyTypeData['none'].color;
 
   // Make fresh detections pop more
   const color = baseColor;

@@ -87,10 +87,9 @@ export const Alerts = ({
                 {/* ===== Left ===== */}
                 <div className="flex items-center gap-2 min-w-0">
                   <span
-                    className="h-2 w-2 rounded-full flex-shrink-0"
                     style={{
                       backgroundColor:
-                        anomalyTypeData[alert.type].color,
+                        alert.type === 'anomaly' ? anomalyTypeData['anomaly'].color : anomalyTypeData['none'].color,
                     }}
                   />
                   <span className="truncate text-muted-foreground">
