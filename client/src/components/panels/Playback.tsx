@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Clock, Settings2 } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Settings2, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { format } from 'date-fns';
@@ -11,33 +11,69 @@ import {
 
 interface PlaybackProps {
   onTimeChange?: (time: Date) => void;
+  onTimeRangeChange?: (start: Date, end: Date) => void;
+  jumpToTime?: Date | null;
 }
 
-export const Playback = ({ onTimeChange }: PlaybackProps) => {
+export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: PlaybackProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
 
-  /* ===================== TIME RANGE ===================== */
-  // Default range expanded to cover both initial SAR (Jan 2) and later EO (Jan 7)
-  const [startTime, setStartTime] = useState(new Date("2025-01-02T00:00:00Z"));
-  const [endTime, setEndTime] = useState(new Date("2025-01-08T00:00:00Z"));
+  // Range covers 2 days before now to now
+  const [startTime, setStartTime] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 2);
+    return d;
+  });
+  const [endTime, setEndTime] = useState(() => new Date()); // Current time
 
-  const [currentTime, setCurrentTime] = useState(5); // Start closer to Jan 2nd SAR data
+  const [currentTime, setCurrentTime] = useState(100); // Start at 100% = now, so all data is visible
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  const getTimeFromValue = (value: number): Date => {
+  // Live mode: auto-update when slider is at the end
+  const isLive = currentTime >= 99.5;
+
+  const getTimeFromValue = useCallback((value: number): Date => {
     const totalMs = endTime.getTime() - startTime.getTime();
     const msSinceStart = (value / 100) * totalMs;
     return new Date(startTime.getTime() + msSinceStart);
-  };
+  }, [startTime, endTime]);
 
   const displayTime = useMemo(
-    () => getTimeFromValue(currentTime),
-    [currentTime, startTime, endTime]
+    () => isLive ? new Date() : getTimeFromValue(currentTime),
+    [currentTime, getTimeFromValue, isLive]
   );
 
   useEffect(() => {
     onTimeChange?.(displayTime);
   }, [displayTime, onTimeChange]);
+
+  // Broadcast the time range whenever it changes
+  useEffect(() => {
+    onTimeRangeChange?.(startTime, endTime);
+  }, [startTime, endTime, onTimeRangeChange]);
+
+  // Live mode: tick endTime forward every 5 seconds
+  useEffect(() => {
+    if (!isLive) return;
+
+    const interval = setInterval(() => {
+      setEndTime(new Date());
+      setCurrentTime(100);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isLive]);
+
+  // External jump: when a vessel/alert is clicked, jump to its time
+  useEffect(() => {
+    if (!jumpToTime) return;
+    const totalMs = endTime.getTime() - startTime.getTime();
+    if (totalMs <= 0) return;
+    const targetMs = jumpToTime.getTime() - startTime.getTime();
+    const pct = Math.max(0, Math.min(100, (targetMs / totalMs) * 100));
+    setCurrentTime(pct);
+    setIsPlaying(false);
+  }, [jumpToTime]);
 
   /* ===================== PLAYBACK LOOP ===================== */
 
@@ -83,10 +119,16 @@ export const Playback = ({ onTimeChange }: PlaybackProps) => {
               <Clock className="h-4 w-4" />
             </div>
             <span className="text-sm font-semibold tracking-tight">Timeline</span>
+            {isLive && (
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30">
+                <Radio className="h-3 w-3 text-red-400 animate-pulse" />
+                <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Live</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="bg-primary/10 border border-primary/20 px-4 py-1.5 rounded-lg text-primary font-mono text-sm font-bold shadow-inner">
+            <div className={`border px-4 py-1.5 rounded-lg font-mono text-sm font-bold shadow-inner ${isLive ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-primary/10 border-primary/20 text-primary'}`}>
               {format(displayTime, "yyyy-MM-dd HH:mm")}
             </div>
 
@@ -141,7 +183,7 @@ export const Playback = ({ onTimeChange }: PlaybackProps) => {
           />
           <div className="flex justify-between text-[10px] text-muted-foreground mt-3 font-mono tracking-wider opacity-60 group-hover:opacity-100 transition-opacity">
             <span>{format(startTime, "dd MMM HH:mm")}</span>
-            <span>{format(endTime, "dd MMM HH:mm")}</span>
+            <span>{isLive ? 'NOW' : format(endTime, "dd MMM HH:mm")}</span>
           </div>
         </div>
 
@@ -176,6 +218,7 @@ export const Playback = ({ onTimeChange }: PlaybackProps) => {
               size="icon"
               className="h-8 w-8 rounded-full border-border/40 bg-background/50 hover:bg-muted"
               onClick={() => setCurrentTime(100)}
+              title="Jump to live"
             >
               <SkipForward className="h-3.5 w-3.5" />
             </Button>

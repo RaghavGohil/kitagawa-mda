@@ -51,6 +51,18 @@ async def lifespan(app: FastAPI):
 
     # Load filter pipeline
     landmask_path = os.path.join(MASK_DIR, "GSHHS_shp", "f", "GSHHS_f_L1.shp")
+    print(f"[Inference Server] MASK_DIR = {MASK_DIR}")
+    print(f"[Inference Server] Landmask path = {landmask_path}")
+    print(f"[Inference Server] MASK_DIR exists: {os.path.exists(MASK_DIR)}")
+    if os.path.exists(MASK_DIR):
+        print(f"[Inference Server] MASK_DIR contents: {os.listdir(MASK_DIR)}")
+        gshhs_dir = os.path.join(MASK_DIR, "GSHHS_shp")
+        if os.path.exists(gshhs_dir):
+            print(f"[Inference Server] GSHHS_shp contents: {os.listdir(gshhs_dir)}")
+            f_dir = os.path.join(gshhs_dir, "f")
+            if os.path.exists(f_dir):
+                print(f"[Inference Server] f/ contents: {os.listdir(f_dir)}")
+    print(f"[Inference Server] Landmask file exists: {os.path.exists(landmask_path)}")
     cloudmask_dir = os.path.join("inference_server", "filters")
     _filter_pipeline = FilterPipeline(
         landmask_shp_path=landmask_path,
@@ -82,10 +94,24 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
+    from shared.utils import check_resources, get_free_disk_gb, get_memory_usage_mb
+    import psutil
+    import os
+    
+    ok, msg = check_resources(min_disk_gb=0.5)
+    data_dir = os.getenv("DATA_DIR", "/data")
+
     return {
-        "status": "healthy",
+        "status": "healthy" if ok else "resource_constrained",
         "models_loaded": list(_adapters.keys()),
         "filters_available": _filter_pipeline is not None,
+        "resources": {
+            "ok": ok,
+            "message": msg,
+            "free_disk_gb": round(get_free_disk_gb(data_dir if os.path.exists(data_dir) else "."), 2),
+            "memory_percent": psutil.virtual_memory().percent,
+            "process_memory_mb": round(get_memory_usage_mb(), 2)
+        }
     }
 
 

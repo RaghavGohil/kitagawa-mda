@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { Polyline, CircleMarker, useMap, useMapEvent } from 'react-leaflet';
 import { API_BASE_URL } from '@/lib/api';
 
@@ -126,7 +126,7 @@ export const AISTrackLayer = ({
     return (
         <>
             {filteredTracks.map((track) => (
-                <div key={`track-group-${track.mmsi}`}>
+                <Fragment key={`track-group-${track.mmsi}`}>
                     {/* Render segments between points so they fade out from the center detection point */}
                     {track.points.map((p, idx) => {
                         const nextP = track.points[idx + 1];
@@ -141,7 +141,7 @@ export const AISTrackLayer = ({
 
 
                         return (
-                            <div key={`ais-seg-${track.mmsi}-${idx}`}>
+                            <Fragment key={`ais-seg-${track.mmsi}-${idx}`}>
                                 <CircleMarker
                                     center={[p.lat, p.lon]}
                                     radius={2}
@@ -164,10 +164,10 @@ export const AISTrackLayer = ({
                                         }}
                                     />
                                 )}
-                            </div>
+                            </Fragment>
                         );
                     })}
-                </div>
+                </Fragment>
             ))}
         </>
     );

@@ -21,8 +21,8 @@ export function useVessels(options?: {
     queryKey: ["vessels", options],
     queryFn: () => fetchVessels(options),
     placeholderData: (previousData) => previousData,
-    staleTime: 10 * 1000, // 10 seconds
-    refetchInterval: 20 * 1000, // 20 seconds
+    staleTime: 30 * 1000, // 30 seconds — cached data shown instantly on reload
+    refetchInterval: 30 * 1000, // 30 seconds
   });
 }
 
@@ -48,8 +48,8 @@ export function useStats() {
   return useQuery({
     queryKey: ["stats"],
     queryFn: fetchStats,
-    staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 120 * 1000, // 2 minutes — stats don't change often
+    refetchInterval: 120 * 1000,
   });
 }
 

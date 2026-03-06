@@ -46,7 +46,7 @@ DATA_DIR = os.getenv("DATA_DIR", "/data")
 IMAGES_DIR = os.path.join(DATA_DIR, "inference_images")
 AIS_DIR = os.path.join(DATA_DIR, "AIS")
 DETECTIONS_DIR = os.path.join(DATA_DIR, "detections")
-MASK_DIR = os.path.join(DATA_DIR, "mask")
+MASK_DIR = os.getenv("MASK_DIR", "/app/landmask")
 
 # ---------------------------------------------------------------------------
 # Copernicus credentials (for image download)

@@ -1,65 +1,13 @@
-// ========================
-// Kitagawa MDA Data
-// ========================
-
-// ===== Types =====
-export type VesselType = "ship" | "unidentified";
-export type AnomalyType = "none" | "anomaly"; // none = Unidentified None, anomaly = Unidentified Anomaly. "ship" type implies Identified.
-export type ZoneType = "eez" | "restricted" | "port" | "shipping_lane";
-
-export interface VesselPosition {
-  lat: number;
-  lng: number;
-  timestamp: Date;
-  speed: number; // knots
-  heading: number; // degrees
-  course: number; // degrees
-}
-
-export interface Vessel {
-  id: string;
-  mmsi: string;
-  imo: string;
-  name: string;
-  callSign: string;
-  flag: string;
-  type: VesselType; // ALWAYS ship
-  length: number;
-  width: number;
-  draught: number;
-  destination: string;
-  eta: Date | null;
-  position: VesselPosition;
-  track: VesselPosition[];
-  anomaly: {
-    type: AnomalyType;
-    confidence: number;
-    description: string;
-  };
-  behaviorProfile: {
-    typicalSpeed: { min: number; max: number; avg: number };
-    typicalRoutes: string[];
-    deviationScore: number;
-  };
-  chipUrl?: string;
-  imageName?: string;
-}
-
-export interface Alert {
-  id: string;
-  vesselId: string;
-  vesselName: string;
-  type: AnomalyType;
-  timestamp: Date;
-}
-
-export interface Zone {
-  id: string;
-  name: string;
-  type: "eez" | "restricted" | "port" | "shipping_lane";
-  coordinates: [number, number][];
-  description: string;
-}
+import {
+  VesselType,
+  AnomalyType,
+  ZoneType,
+  VesselPosition,
+  Vessel,
+  Alert,
+  Zone,
+  DashboardStats,
+} from "../types";
 
 // ===== UI Metadata =====
 // Combined metadata for the UI representation
@@ -75,8 +23,10 @@ export const anomalyTypeData: Record<
   AnomalyType,
   { label: string; color: string }
 > = {
-  none: { label: "None", color: "#94a3b8" },
-  anomaly: { label: "Anomaly", color: "#FACC15" },
+  identified: { label: "Identified", color: "#3B82F6" },
+  no_anomaly: { label: "No Anomaly", color: "#22C55E" },
+  anomaly: { label: "Anomaly", color: "#EF4444" },
+  unidentified: { label: "Unidentified", color: "#94a3b8" },
 };
 
 export const zoneTypeData: Record<ZoneType, { label: string; color: string }> =
@@ -99,10 +49,15 @@ const generateCallSign = (): string => {
   );
 };
 
-const getAnomalyDescription = (type: AnomalyType): string =>
-  type === "anomaly"
-    ? "Detected anomalous behavior (speed, route, or AIS gap)"
-    : "";
+const getAnomalyDescription = (type: AnomalyType): string => {
+  switch (type) {
+    case "anomaly": return "Detected vessel not transmitting AIS in covered area";
+    case "unidentified": return "Detected outside AIS coverage area — status unknown";
+    case "identified": return "Matched to AIS vessel";
+    case "no_anomaly": return "Matched to AIS, position verified";
+    default: return "";
+  }
+};
 
 // ===== Track Generator =====
 const generateTrack = (
@@ -143,151 +98,9 @@ const generateTrack = (
 };
 
 // ===== Zones =====
-export const zones: Zone[] = [
-  {
-    id: "eez-us",
-    name: "US East Coast EEZ",
-    type: "eez",
-    coordinates: [
-      [35, -80],
-      [35, -70],
-      [42, -70],
-      [42, -80],
-      [35, -80],
-    ],
-    description: "Exclusive Economic Zone of the United States - East Coast",
-  },
-  {
-    id: "restricted-1",
-    name: "Naval Exercise Area",
-    type: "restricted",
-    coordinates: [
-      [37, -75],
-      [37, -73],
-      [39, -73],
-      [39, -75],
-      [37, -75],
-    ],
-    description: "Temporary restricted zone for naval exercises",
-  },
-  {
-    id: "port-norfolk",
-    name: "Norfolk Port Zone",
-    type: "port",
-    coordinates: [
-      [36.8, -76.5],
-      [36.8, -76.0],
-      [37.1, -76.0],
-      [37.1, -76.5],
-      [36.8, -76.5],
-    ],
-    description: "Port of Norfolk anchorage and approach",
-  },
-  {
-    id: "shipping-lane-1",
-    name: "Atlantic Shipping Lane",
-    type: "shipping_lane",
-    coordinates: [
-      [36, -76],
-      [36, -74],
-      [40, -72],
-      [40, -74],
-      [36, -76],
-    ],
-    description: "Major Atlantic shipping lane",
-  },
-];
-
-// ===== Vessel Generation =====
-const flags = ["Panama", "Liberia", "Singapore", "Japan", "Norway", "USA"];
-const destinations = [
-  "Singapore",
-  "Rotterdam",
-  "Shanghai",
-  "Los Angeles",
-  "Tokyo",
-];
-const vesselNames = [
-  "Ever Given",
-  "MSC Oscar",
-  "OOCL Hong Kong",
-  "Madrid Maersk",
-  "CMA CGM Antoine",
-];
-
-export const generateVessels = (count = 50): Vessel[] => {
-  const vessels: Vessel[] = [];
-  const centerLat = 15;
-  const centerLng = 115;
-  const spread = 20;
-
-  for (let i = 0; i < count; i++) {
-    const startLat = centerLat + (Math.random() - 0.5) * spread * 2;
-    const startLng = centerLng + (Math.random() - 0.5) * spread * 2;
-    const heading = Math.random() * 360;
-    const track = generateTrack(startLat, startLng, 20, [5, 18], heading);
-    const currentPos = track[track.length - 1];
-    const hasAnomaly = Math.random() < 0.2;
-
-    vessels.push({
-      id: `vessel-${i}`,
-      mmsi: `${200000000 + Math.floor(Math.random() * 600000000)}`,
-      imo: `IMO${9000000 + Math.floor(Math.random() * 999999)}`,
-      name: vesselNames[i % vesselNames.length],
-      callSign: generateCallSign(),
-      flag: flags[Math.floor(Math.random() * flags.length)],
-      type: "ship",
-      length: 50 + Math.random() * 250,
-      width: 10 + Math.random() * 50,
-      draught: 5 + Math.random() * 15,
-      destination:
-        destinations[Math.floor(Math.random() * destinations.length)],
-      eta: new Date(Date.now() + Math.random() * 7 * 24 * 60 * 60 * 1000),
-      position: currentPos,
-      track,
-      anomaly: {
-        type: hasAnomaly ? "anomaly" : "none",
-        confidence: hasAnomaly ? 0.6 + Math.random() * 0.35 : 0,
-        description: getAnomalyDescription(hasAnomaly ? "anomaly" : "none"),
-      },
-      behaviorProfile: {
-        typicalSpeed: { min: 5, max: 18, avg: 11.5 },
-        typicalRoutes: [
-          destinations[Math.floor(Math.random() * destinations.length)],
-        ],
-        deviationScore: hasAnomaly
-          ? 0.4 + Math.random() * 0.5
-          : Math.random() * 0.2,
-      },
-    });
-  }
-
-  return vessels;
-};
-
-export const vessels = generateVessels(50);
-
-// ===== Alerts (GLOBAL) =====
-export const alerts: Alert[] = vessels
-  .filter((v) => v.anomaly.type === "anomaly")
-  .map((v) => ({
-    id: `alert-${v.id}`,
-    vesselId: v.id,
-    vesselName: v.name,
-    type: "anomaly" as const,
-    timestamp: v.position.timestamp,
-  }))
-  .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+export const zones: Zone[] = [];
 
 // ===== Dashboard Stats =====
-export interface DashboardStats {
-  activeVessels: number;
-  anomaliesDetected: number;
-  highRiskZones: number;
-  aisGaps: number;
-  averageSpeed: number;
-  vesselsByType: Record<VesselType, number>;
-}
 
 export const getDashboardStats = (vessels: Vessel[]): DashboardStats => {
   let totalSpeed = 0;

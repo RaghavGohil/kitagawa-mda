@@ -141,3 +141,39 @@ class ProcessedImage(Base):
     image_name = Column(String(512), unique=True, nullable=False, index=True)
     sensor_type = Column(String(8), nullable=False)
     processed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AISCoverageDate(Base):
+    """
+    Tracks which dates have AIS data available in the system.
+    Used by the 4-state vessel classification to distinguish
+    'unidentified' (no AIS data) from 'anomaly' (AIS data present but no match).
+    """
+    __tablename__ = "ais_coverage_dates"
+
+    date = Column(DateTime(timezone=False), primary_key=True)
+    has_coverage = Column(Integer, nullable=False, default=0)  # 1=yes, 0=no
+    checked_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MaritimeBoundary(Base):
+    """
+    Dynamic maritime boundaries (EEZs, restricted zones, etc.) ingested from external sources.
+    """
+    __tablename__ = "maritime_boundaries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(512), nullable=False)
+    boundary_type = Column(String(64), nullable=False)  # "eez", "restricted", etc.
+    country = Column(String(255), nullable=True)
+    
+    # Store arbitrary metadata if needed
+    metadata_json = Column(Text, nullable=True)
+
+    # PostGIS geometry: Polygon or MultiPolygon
+    geom = Column(
+        Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True),
+        nullable=False,
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

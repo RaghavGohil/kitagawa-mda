@@ -1,39 +1,31 @@
 import { useState } from 'react';
-import { Layers, Ship, TriangleAlert, MapPin, Route, ChevronDown, ChevronUp } from 'lucide-react';
+import { Layers, TriangleAlert, MapPin, Route, ChevronDown, ChevronUp } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { AnomalyType, ZoneType } from '@/types';
 import {
-  vesselTypeData,
   anomalyTypeData,
-  VesselType,
-  AnomalyType,
   zoneTypeData,
-  ZoneType,
 } from '@/data/data';
 
 interface LayerControlProps {
-  visibleVesselTypes: Set<VesselType>;
   visibleAnomalyTypes: Set<AnomalyType>;
   visibleZoneTypes: Set<ZoneType>;
   showTracks: boolean;
-  onVesselTypesToggle: (type: VesselType) => void;
   onAnomalyTypesToggle: (type: AnomalyType) => void;
   onZoneTypesToggle: (type: ZoneType) => void;
   onShowTracksChange: (show: boolean) => void;
 }
 
 export const LayerControl = ({
-  visibleVesselTypes,
   visibleAnomalyTypes,
   visibleZoneTypes,
   showTracks,
-  onVesselTypesToggle,
   onAnomalyTypesToggle,
   onZoneTypesToggle,
   onShowTracksChange,
 }: LayerControlProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [vesselTypesExpanded, setVesselTypesExpanded] = useState(true);
-  const [anomalyTypesExpanded, setAnomalyTypesExpanded] = useState(true);
+  const [classificationExpanded, setClassificationExpanded] = useState(true);
   const [zonesExpanded, setZonesExpanded] = useState(true);
 
   return (
@@ -52,55 +44,20 @@ export const LayerControl = ({
 
       {isExpanded && (
         <div className="divide-y">
-          {/* ===== Vessel Types ===== */}
+          {/* ===== Vessel Classification (single consolidated section) ===== */}
           <div className="px-3 py-3 space-y-2">
             <button
-              onClick={() => setVesselTypesExpanded(!vesselTypesExpanded)}
-              className="flex w-full justify-between text-xs uppercase text-muted-foreground"
-            >
-              <div className="flex items-center gap-2">
-                <Ship className="h-3.5 w-3.5" />
-                Identification Status
-              </div>
-              {vesselTypesExpanded ? <ChevronUp /> : <ChevronDown />}
-            </button>
-
-            {vesselTypesExpanded &&
-              Object.entries(vesselTypeData).map(([id, meta]) => (
-                <label
-                  key={id}
-                  className="flex items-center justify-between text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: meta.color }}
-                    />
-                    {meta.label}
-                  </div>
-                  <Switch
-                    checked={visibleVesselTypes.has(id as VesselType)}
-                    onCheckedChange={() => onVesselTypesToggle(id as VesselType)}
-                    className="scale-75"
-                  />
-                </label>
-              ))}
-          </div>
-
-          {/* ===== Anomaly Types ===== */}
-          <div className="px-3 py-3 space-y-2">
-            <button
-              onClick={() => setAnomalyTypesExpanded(!anomalyTypesExpanded)}
+              onClick={() => setClassificationExpanded(!classificationExpanded)}
               className="flex w-full justify-between text-xs uppercase text-muted-foreground"
             >
               <div className="flex items-center gap-2">
                 <TriangleAlert className="h-3.5 w-3.5" />
-                Anomaly Types
+                Vessel Classification
               </div>
-              {anomalyTypesExpanded ? <ChevronUp /> : <ChevronDown />}
+              {classificationExpanded ? <ChevronUp /> : <ChevronDown />}
             </button>
 
-            {anomalyTypesExpanded &&
+            {classificationExpanded &&
               Object.entries(anomalyTypeData).map(([id, meta]) => (
                 <label
                   key={id}
@@ -136,22 +93,24 @@ export const LayerControl = ({
             </button>
 
             {zonesExpanded &&
-              Object.entries(zoneTypeData).map(([id, meta]) => (
-                <label key={id} className="flex justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: meta.color }}
+              Object.entries(zoneTypeData)
+                .filter(([id]) => id === 'eez' || id === 'shipping_lane')
+                .map(([id, meta]) => (
+                  <label key={id} className="flex justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: meta.color }}
+                      />
+                      {meta.label}
+                    </div>
+                    <Switch
+                      checked={visibleZoneTypes.has(id as ZoneType)}
+                      onCheckedChange={() => onZoneTypesToggle(id as ZoneType)}
+                      className="scale-75"
                     />
-                    {meta.label}
-                  </div>
-                  <Switch
-                    checked={visibleZoneTypes.has(id as ZoneType)}
-                    onCheckedChange={() => onZoneTypesToggle(id as ZoneType)}
-                    className="scale-75"
-                  />
-                </label>
-              ))}
+                  </label>
+                ))}
           </div>
 
           {/* ===== Tracks ===== */}
@@ -173,4 +132,3 @@ export const LayerControl = ({
     </div>
   );
 };
-

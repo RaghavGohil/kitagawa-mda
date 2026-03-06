@@ -37,12 +37,9 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """Create all tables if they don't exist."""
-    from backend_server.db.models import (  # noqa: F401 — ensure models are imported
-        AISTrack,
-        Detection,
-        ImageChip,
-        ProcessedImage,
-        AISVessel,
+    from backend_server.db.models import (
+        Detection, AISTrack, ImageChip, AISVessel,
+        ProcessedImage, AISCoverageDate, MaritimeBoundary
     )
     async with engine.begin() as conn:
         # Enable PostGIS extension

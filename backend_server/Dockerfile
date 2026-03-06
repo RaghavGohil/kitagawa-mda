@@ -25,8 +25,18 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
     gdal-bin \
     libgeos-c1v5 \
-    curl && \
+    curl \
+    unzip && \
     rm -rf /var/lib/apt/lists/*
+
+# Pre-download Landmask & Boundaries (Internal to Image)
+WORKDIR /app/landmask
+RUN curl -L http://www.soest.hawaii.edu/pwessel/gshhg/gshhg-shp-2.3.7.zip -o gshhg.zip && \
+    unzip gshhg.zip && \
+    rm gshhg.zip && \
+    curl -L https://github.com/lmirosevic/ReverseGeo/raw/master/lib/reverse_geo/World-EEZ.geojson -o world_eez.geojson && \
+    curl -L https://raw.githubusercontent.com/newzealandpaul/Shipping-Lanes/main/data/Shipping_Lanes_v1.geojson -o shipping_lanes.geojson
+WORKDIR /app
 
 # Copy installed python packages
 COPY --from=builder /root/.local /root/.local

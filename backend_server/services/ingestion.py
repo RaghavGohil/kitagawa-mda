@@ -17,7 +17,7 @@ from typing import Optional
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from sqlalchemy import text
+from sqlalchemy import text, exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from tqdm import tqdm
 
@@ -91,7 +91,7 @@ def _download_product(token: str, product_id: str, temp_path: str):
                     bar.update(len(chunk))
 
 
-def download_images(image_names: list[str]) -> list[str]:
+async def download_images(image_names: list[str]) -> list[str]:
     """
     Download satellite images from Copernicus Dataspace.
     Returns list of extracted folder paths.
@@ -124,10 +124,19 @@ def download_images(image_names: list[str]) -> list[str]:
                 continue
 
             try:
-                _download_product(token, prod_id, temp_path)
+                # We use loop.run_in_executor for the synchronous _download_product
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _download_product, token, prod_id, temp_path)
                 os.rename(temp_path, zip_path)
             except Exception as e:
                 print(f"[Ingestion] Download failed for {fname}: {e}")
+                if "No space left on device" in str(e) or (hasattr(e, "errno") and e.errno == 28):
+                    # Trigger emergency cleanup (but don't wait/retry here, let next loop handle folder)
+                    from backend_server.db.connection import async_session
+                    async with async_session() as db:
+                        await cleanup_uncorrelated_ais(db, preserve_days=1)
+                
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 continue
@@ -138,6 +147,12 @@ def download_images(image_names: list[str]) -> list[str]:
             downloaded.append(extracted_folder)
         except Exception as e:
             print(f"[Ingestion] Extraction failed for {zip_path}: {e}")
+            if "No space left on device" in str(e) or (hasattr(e, "errno") and e.errno == 28):
+                # Trigger emergency cleanup
+                from backend_server.db.connection import async_session
+                async with async_session() as db:
+                    await cleanup_uncorrelated_ais(db, preserve_days=1)
+            
             if os.path.exists(extracted_folder):
                 import shutil
                 shutil.rmtree(extracted_folder)
@@ -147,7 +162,7 @@ def download_images(image_names: list[str]) -> list[str]:
     return downloaded
 
 
-def search_recent_images(instrument: str = "SAR", days: int = 7, start_date: str = None, end_date: str = None) -> list[dict]:
+def search_recent_images(instrument: str = "SAR", days: int = 7, start_date: str = None, end_date: str = None, aoi: str = None) -> list[dict]:
     """
     Search for products on Copernicus Dataspace.
     instrument: 'SAR' (Sentinel-1) or 'EO' (Sentinel-2)
@@ -185,16 +200,15 @@ def search_recent_images(instrument: str = "SAR", days: int = 7, start_date: str
         f"{date_filter}"
     )
 
-    # Use Long Beach/LA area as default AOI for testing (matches US AIS data)
-    # Bounding Box approx: [-118.5, 33.5, -117.8, 34.0]
-    us_aoi = "POLYGON ((-118.5 33.5, -117.8 33.5, -117.8 34.0, -118.5 34.0, -118.5 33.5))"
-    spatial_filter = f"OData.CSC.Intersects(area=geography'SRID=4326;{us_aoi}')"
-    filter_expr += f" and {spatial_filter}"
+    # Spatial filter (default to global if not provided)
+    if aoi:
+        spatial_filter = f"OData.CSC.Intersects(area=geography'SRID=4326;{aoi}')"
+        filter_expr += f" and {spatial_filter}"
     
     params = {
         "$filter": filter_expr,
         "$top": "50",
-        "$orderby": "ContentDate/Start asc"
+        "$orderby": "ContentDate/Start desc"
     }
 
     try:
@@ -256,6 +270,7 @@ async def download_and_ingest_ais(
 ) -> int:
     """
     Download AIS CSV files from NOAA and insert into PostGIS.
+    Records AIS coverage per date for the 4-state classification.
     Returns total number of records inserted.
     """
     os.makedirs(AIS_DIR, exist_ok=True)
@@ -265,6 +280,7 @@ async def download_and_ingest_ais(
 
     for year, year_dates in dates_by_year.items():
         base_url = f"https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/index.html"
+        links = []
         try:
             resp = requests.get(base_url, timeout=30)
             resp.raise_for_status()
@@ -273,6 +289,9 @@ async def download_and_ingest_ais(
             base_prefix = base_url.rsplit("/", 1)[0]
         except Exception as e:
             print(f"[Ingestion] Failed to fetch AIS index for {year}: {e}")
+            # Mark ALL dates for this year as no-coverage
+            for date_fmt, csv_name in year_dates:
+                await _record_ais_coverage(db, date_fmt, has_coverage=False)
             continue
 
         for date_fmt, csv_name in year_dates:
@@ -297,6 +316,8 @@ async def download_and_ingest_ais(
                             )
                             break
                     if not file_link:
+                        print(f"[Ingestion] AIS file not found for {date_fmt} (year {year}) — marking as no coverage")
+                        await _record_ais_coverage(db, date_fmt, has_coverage=False)
                         continue
 
                     try:
@@ -317,6 +338,7 @@ async def download_and_ingest_ais(
                         os.rename(temp_path, archive_path)
                     except Exception as e:
                         print(f"[Ingestion] AIS download failed: {archive_name}: {e}")
+                        await _record_ais_coverage(db, date_fmt, has_coverage=False)
                         continue
 
                 # Extract
@@ -326,6 +348,7 @@ async def download_and_ingest_ais(
                             zf.extractall(AIS_DIR)
                     except Exception as e:
                         print(f"[Ingestion] AIS extraction failed: {e}")
+                        await _record_ais_coverage(db, date_fmt, has_coverage=False)
                         continue
                 elif archive_path.endswith(".zst"):
                     try:
@@ -340,14 +363,46 @@ async def download_and_ingest_ais(
                                     decomp.write(chunk)
                     except Exception as e:
                         print(f"[Ingestion] ZST decompression failed: {e}")
+                        await _record_ais_coverage(db, date_fmt, has_coverage=False)
                         continue
 
             # Insert into PostGIS
             if os.path.exists(csv_path):
                 count = await _insert_ais_csv(csv_path, db, chunk_size)
                 total_inserted += count
+                # Mark as covered if we inserted any data
+                await _record_ais_coverage(db, date_fmt, has_coverage=(count > 0))
+            else:
+                await _record_ais_coverage(db, date_fmt, has_coverage=False)
 
     return total_inserted
+
+
+async def _record_ais_coverage(db: AsyncSession, date_fmt: str, has_coverage: bool):
+    """Record whether AIS data is available for a given date."""
+    try:
+        # Parse date from format like "2025-01-02" or "2025_01_02"
+        clean = date_fmt.replace("_", "-")
+        date_val = datetime.strptime(clean, "%Y-%m-%d").date()
+        coverage_int = 1 if has_coverage else 0
+        await db.execute(
+            text("""
+                INSERT INTO ais_coverage_dates (date, has_coverage, checked_at)
+                VALUES (:d, :cov, NOW())
+                ON CONFLICT (date) DO UPDATE SET
+                    has_coverage = GREATEST(ais_coverage_dates.has_coverage, :cov),
+                    checked_at = NOW()
+            """),
+            {"d": date_val, "cov": coverage_int}
+        )
+        await db.commit()
+        print(f"[Ingestion] AIS coverage for {date_val}: {'YES' if has_coverage else 'NO'}")
+    except Exception as e:
+        print(f"[Ingestion] Failed to record AIS coverage for {date_fmt}: {e}")
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 
 async def _insert_ais_csv(
@@ -439,7 +494,13 @@ async def _insert_ais_csv(
 
     except Exception as e:
         await db.rollback()
-        print(f"[Ingestion] Failed to insert AIS data from {csv_path}: {e}")
+        # Check for PostgreSQL Disk Full error (53100)
+        if hasattr(e, "orig") and hasattr(e.orig, "sqlstate") and e.orig.sqlstate == "53100":
+            print("[Ingestion] DISK FULL detected in Database! Triggering emergency AIS cleanup...")
+            await cleanup_uncorrelated_ais(db)
+            # We don't retry here to avoid loops, but next chunk might succeed after cleanup
+        else:
+            print(f"[Ingestion] Failed to insert AIS data from {csv_path}: {e}")
 
     print(f"[Ingestion] Inserted {inserted} AIS records from {os.path.basename(csv_path)}")
     return inserted
@@ -473,3 +534,30 @@ def download_landmask():
         zf.extractall(MASK_DIR)
 
     print(f"[Ingestion] Landmask ready at {shp_path}")
+
+
+async def cleanup_uncorrelated_ais(db: AsyncSession, preserve_days: int = 3):
+    """
+    Delete AIS tracks that do not correspond to any detected vessel's MMSI,
+    but preserve very recent data (default 3 days) to allow for correlation.
+    """
+    print(f"[Ingestion] Running AIS track cleanup (preserving last {preserve_days} days)...")
+    try:
+        # 1. Identify all MMSIs that have a detection
+        # 2. Delete tracks for MMSIs not in the list AND older than preserve_days
+        threshold = datetime.now(timezone.utc) - timedelta(days=preserve_days)
+        
+        await db.execute(
+            text("""
+                DELETE FROM ais_tracks 
+                WHERE mmsi NOT IN (SELECT DISTINCT mmsi FROM detections WHERE mmsi IS NOT NULL)
+                  AND timestamp < :threshold
+            """),
+            {"threshold": threshold}
+        )
+        
+        await db.commit()
+        print("[Ingestion] AIS cleanup complete.")
+    except Exception as e:
+        await db.rollback()
+        print(f"[Ingestion] AIS cleanup failed: {e}")

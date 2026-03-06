@@ -12,12 +12,12 @@ import { Alerts } from "@/components/panels/Alerts";
 
 import {
   Vessel,
-  Alert,
-  vesselTypeData,
-  anomalyTypeData,
-  VesselType,
   AnomalyType,
   ZoneType,
+} from "@/types";
+
+import {
+  anomalyTypeData,
   zoneTypeData,
 } from "@/data/data";
 
@@ -34,10 +34,11 @@ const Index = () => {
     bounds: mapBounds,
     zoom: mapZoom
   });
-  const { data: alertsData, isLoading: alertsLoading } = useAlerts(50);
+  const [alertLimit, setAlertLimit] = useState(20);
+  const { data: alertsData, isLoading: alertsLoading } = useAlerts(alertLimit);
 
   const vessels = vesselsData?.vessels ?? [];
-  const alerts = (alertsData ?? []) as Alert[];
+  const alerts = (alertsData ?? []);
 
   /* ================= VESSEL DETAIL (for sidebar) ================= */
 
@@ -52,7 +53,13 @@ const Index = () => {
   }, [selectedVessel, vesselDetail]);
 
   /* ================= PLAYBACK TIME ================= */
-  const [playbackTime, setPlaybackTime] = useState<Date>(new Date("2025-01-02T03:00:00Z"));
+  const [playbackTime, setPlaybackTime] = useState<Date>(() => new Date()); // Default to now, showing all data
+  const [jumpToTime, setJumpToTime] = useState<Date | null>(null);
+  const [timeRangeMs, setTimeRangeMs] = useState<number>(2 * 24 * 60 * 60 * 1000); // Default 2 days
+
+  const handleTimeRangeChange = useCallback((start: Date, end: Date) => {
+    setTimeRangeMs(end.getTime() - start.getTime());
+  }, []);
 
   /* ================= STATE ================= */
 
@@ -65,34 +72,21 @@ const Index = () => {
     }
   }, [vessels]);
 
-  const allVesselTypes = Object.keys(vesselTypeData) as VesselType[];
   const allAnomalyTypes = Object.keys(anomalyTypeData) as AnomalyType[];
   const allZoneTypes = Object.keys(zoneTypeData) as ZoneType[];
-
-  const [visibleVesselTypes, setVisibleVesselTypes] = useState<Set<VesselType>>(
-    () => new Set(allVesselTypes),
-  );
 
   const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<Set<AnomalyType>>(
     () => new Set(allAnomalyTypes),
   );
 
   const [visibleZoneTypes, setVisibleZoneTypes] = useState<Set<ZoneType>>(
-    () => new Set(), // Start with all zones hidden
+    () => new Set(['eez', 'shipping_lane'] as ZoneType[]), // Start with EEZ and Shipping Lanes visible
   );
 
   const [showTracks, setShowTracks] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(true);
 
   /* ================= HANDLERS ================= */
-
-  const handleVesselTypesToggle = useCallback((type: VesselType) => {
-    setVisibleVesselTypes((prev) => {
-      const next = new Set(prev);
-      next.has(type) ? next.delete(type) : next.add(type);
-      return next;
-    });
-  }, []);
 
   const handleAnomalyTypesToggle = useCallback((type: AnomalyType) => {
     setVisibleAnomalyTypes((prev) => {
@@ -113,6 +107,10 @@ const Index = () => {
   const handleVesselSelect = useCallback((vessel: Vessel | null) => {
     setSelectedVessel(vessel);
     setDrawerOpen(true);
+    // Jump playback to vessel's detection time
+    if (vessel?.position?.timestamp) {
+      setJumpToTime(new Date(vessel.position.timestamp));
+    }
   }, []);
 
   const handleAlertClick = useCallback((alertVesselId: string) => {
@@ -151,11 +149,9 @@ const Index = () => {
 
   const visibleVessels = useMemo(() => {
     return filteredVessels.filter(
-      (v) =>
-        visibleVesselTypes.has(v.type) &&
-        visibleAnomalyTypes.has(v.anomaly.type),
+      (v) => visibleAnomalyTypes.has(v.anomaly.type),
     );
-  }, [filteredVessels, visibleVesselTypes, visibleAnomalyTypes]);
+  }, [filteredVessels, visibleAnomalyTypes]);
 
   // Filter by playback time
   const timeFilteredVessels = useMemo(() => {
@@ -212,6 +208,7 @@ const Index = () => {
             showTracks={showTracks}
             visibleZoneTypes={visibleZoneTypes}
             playbackTime={playbackTime}
+            timeRangeMs={timeRangeMs}
             onViewChange={(bounds, zoom) => {
               setMapBounds(bounds);
               setMapZoom(zoom);
@@ -236,13 +233,11 @@ const Index = () => {
             <VesselInfoPanel vessel={enrichedVessel} isLoading={isDetailLoading} />
           ) : (
             <div className="flex flex-col space-y-2">
-              <Alerts alerts={alerts} isLoading={alertsLoading} onAlertClick={handleAlertClick} />
+              <Alerts alerts={alerts} isLoading={alertsLoading} onAlertClick={handleAlertClick} alertLimit={alertLimit} onAlertLimitChange={setAlertLimit} />
               <LayerControl
-                visibleVesselTypes={visibleVesselTypes}
                 visibleAnomalyTypes={visibleAnomalyTypes}
                 visibleZoneTypes={visibleZoneTypes}
                 showTracks={showTracks}
-                onVesselTypesToggle={handleVesselTypesToggle}
                 onAnomalyTypesToggle={handleAnomalyTypesToggle}
                 onZoneTypesToggle={handleZoneTypesToggle}
                 onShowTracksChange={setShowTracks}
@@ -262,7 +257,7 @@ const Index = () => {
 
         {/* ================= TIME ================= */}
         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 w-full max-w-xl px-4 pointer-events-auto">
-          <Playback onTimeChange={setPlaybackTime} />
+          <Playback onTimeChange={setPlaybackTime} onTimeRangeChange={handleTimeRangeChange} jumpToTime={jumpToTime} />
         </div>
 
       </div>

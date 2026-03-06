@@ -10,7 +10,7 @@ import {
   ArrowRight,
   Loader2,
 } from 'lucide-react';
-import { Vessel } from '@/data/data';
+import { Vessel } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -28,7 +28,7 @@ const vesselTypeLabels: Record<string, string> = {
 
 
 export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => {
-  const hasAnomaly = vessel.anomaly.type !== 'none';
+  const hasAnomaly = vessel.anomaly.type === 'anomaly';
 
   return (
     <div className="flex flex-col w-full pb-8">
@@ -112,10 +112,10 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
       <div className="flex flex-col gap-2">
         <p className="text-xs text-muted-foreground font-semibold">Identification</p>
 
-        <InfoRow icon={MapPin} label={`MMSI: ${vessel.mmsi || '-'}`} />
-        <InfoRow icon={Compass} label={`IMO: ${vessel.imo || '-'}`} />
-        <InfoRow icon={Ship} label={`Call Sign: ${vessel.callSign || '-'}`} />
-        <InfoRow icon={Anchor} label={`Flag: ${vessel.flag || '-'}`} />
+        <InfoRow icon={MapPin} label={`MMSI: ${vessel.mmsi || '—'}`} />
+        <InfoRow icon={Compass} label={`IMO: ${vessel.imo || '—'}`} />
+        <InfoRow icon={Ship} label={`Call Sign: ${vessel.callSign || '—'}`} />
+        <InfoRow icon={Anchor} label={`Flag: ${vessel.flag || '—'}`} />
 
         {vessel.imageName && (
           <div className="flex flex-col gap-1 mt-1">
@@ -161,10 +161,10 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
           icon={Gauge}
           label={`Speed: ${vessel.position.speed != null ? vessel.position.speed.toFixed(1) + ' kn' : '-'}, Heading: ${vessel.position.heading != null ? vessel.position.heading.toFixed(1) + '°' : '-'}`}
         />
-        <InfoRow icon={ArrowRight} label={`Destination: ${vessel.destination || '-'}`} />
+        <InfoRow icon={ArrowRight} label={`Destination: ${vessel.destination || '—'}`} />
         <InfoRow
           icon={Clock}
-          label={`ETA: ${vessel.eta ? format(vessel.eta, 'dd MMM yyyy HH:mm') : '-'}`}
+          label={`ETA: ${vessel.eta ? format(vessel.eta, 'dd MMM yyyy HH:mm') : '—'}`}
         />
       </div>
 
@@ -174,29 +174,9 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
       <div className="flex flex-col gap-2">
         <p className="text-xs text-muted-foreground font-semibold">Dimensions</p>
 
-        <InfoRow icon={Anchor} label={`Length: ${vessel.length ? vessel.length.toFixed(1) + ' m' : '-'}`} />
-        <InfoRow icon={Anchor} label={`Width: ${vessel.width ? vessel.width.toFixed(1) + ' m' : '-'}`} />
-        <InfoRow icon={Anchor} label={`Draught: ${vessel.draught ? vessel.draught.toFixed(1) + ' m' : '-'}`} />
-      </div>
-
-      <Separator className="my-2" />
-
-      {/* ===== Behavior Profile ===== */}
-      <div className="flex flex-col gap-2">
-        <p className="text-xs text-muted-foreground font-semibold">Behavior Profile</p>
-
-        <InfoRow
-          icon={Gauge}
-          label={`Speed: ${vessel.behaviorProfile.typicalSpeed.min}-${vessel.behaviorProfile.typicalSpeed.max} kn (avg ${vessel.behaviorProfile.typicalSpeed.avg.toFixed(1)} kn)`}
-        />
-        <InfoRow
-          icon={Route}
-          label={`Typical Routes: ${vessel.behaviorProfile.typicalRoutes.join(', ')}`}
-        />
-        <InfoRow
-          icon={Compass}
-          label={`Deviation Score: ${(vessel.behaviorProfile.deviationScore * 100).toFixed(1)}%`}
-        />
+        <InfoRow icon={Anchor} label={`Length: ${vessel.length ? vessel.length.toFixed(1) + ' m' : '—'}`} />
+        <InfoRow icon={Anchor} label={`Width: ${vessel.width ? vessel.width.toFixed(1) + ' m' : '—'}`} />
+        <InfoRow icon={Anchor} label={`Draught: ${vessel.draught ? vessel.draught.toFixed(1) + ' m' : '—'}`} />
       </div>
     </div>
   );

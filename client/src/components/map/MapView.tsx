@@ -7,7 +7,7 @@ import {
   useMapEvent,
   useMapEvents,
 } from "react-leaflet";
-import { Vessel, Zone, ZoneType } from "@/data/data";
+import { Vessel, Zone, ZoneType } from "@/types";
 import { VesselMarker } from "./VesselMarker";
 import { ZoneLayer } from "./ZoneLayer";
 import { AISTrackLayer } from "./AISTrackLayer";
@@ -21,10 +21,14 @@ interface MapViewProps {
   showTracks: boolean;
   visibleZoneTypes: Set<ZoneType>;
   playbackTime: Date;
+  timeRangeMs?: number;
   onViewChange?: (bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number }, zoom: number) => void;
 }
 
-// Component to deselect vessel on map click
+// =============================================================================
+// SUB-COMPONENTS (Defined OUTSIDE to prevent state reset on parent re-render)
+// =============================================================================
+
 const MapClickHandler = ({ onClick }: { onClick: () => void }) => {
   useMapEvent("click", () => {
     onClick();
@@ -32,7 +36,6 @@ const MapClickHandler = ({ onClick }: { onClick: () => void }) => {
   return null;
 };
 
-// Component to track zoom and bounds
 const MapViewListener = ({ onUpdate }: { onUpdate: (z: number, bounds: any) => void }) => {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -47,7 +50,6 @@ const MapViewListener = ({ onUpdate }: { onUpdate: (z: number, bounds: any) => v
     },
   });
 
-  // Cleanup
   useEffect(() => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -57,13 +59,26 @@ const MapViewListener = ({ onUpdate }: { onUpdate: (z: number, bounds: any) => v
   return null;
 };
 
-// Component to center on first vessel once if no vessel is selected
+const MapViewFitBounds = () => {
+  const map = useMap();
+  const hasFitted = useRef(false);
+
+  useEffect(() => {
+    if (!hasFitted.current) {
+      // Fit world nicely on first load
+      map.fitBounds([[-70, -180], [70, 180]], { animate: false });
+      hasFitted.current = true;
+    }
+  }, [map]);
+
+  return null;
+};
+
 const MapInitialCenter = ({ vessels, enabled }: { vessels: Vessel[]; enabled: boolean }) => {
   const map = useMap();
   const hasCentered = useRef(false);
 
   useEffect(() => {
-    // Only center if we haven't already, we have vessels, AND it's enabled
     if (enabled && !hasCentered.current && vessels.length > 0) {
       const first = vessels[0];
       if (first.position?.lat != null && first.position.lng != null) {
@@ -76,7 +91,6 @@ const MapInitialCenter = ({ vessels, enabled }: { vessels: Vessel[]; enabled: bo
   return null;
 };
 
-// Component to auto-zoom to selected vessel
 const MapFocusVessel = ({ vessel }: { vessel: Vessel | null }) => {
   const map = useMap();
   const lastVesselId = useRef<string | null>(null);
@@ -84,7 +98,6 @@ const MapFocusVessel = ({ vessel }: { vessel: Vessel | null }) => {
   useEffect(() => {
     if (vessel?.position?.lat != null && vessel.position.lng != null) {
       if (vessel.id !== lastVesselId.current) {
-        // Force zoom 12 for a clear focus using flyTo for robustness
         map.flyTo([vessel.position.lat, vessel.position.lng], 12, {
           animate: true,
           duration: 0.5
@@ -99,6 +112,10 @@ const MapFocusVessel = ({ vessel }: { vessel: Vessel | null }) => {
   return null;
 };
 
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
+
 export const MapView = ({
   vessels,
   selectedVessel,
@@ -106,9 +123,10 @@ export const MapView = ({
   showTracks,
   visibleZoneTypes,
   playbackTime,
+  timeRangeMs,
   onViewChange,
 }: MapViewProps) => {
-  const [zoom, setZoom] = useState(10);
+  const [zoom, setZoom] = useState(3);
 
   const handleUpdate = useCallback((z: number, bounds: any) => {
     setZoom(z);
@@ -125,27 +143,32 @@ export const MapView = ({
   return (
     <MapContainer
       className="h-full w-full"
-      center={[33.7, -118.2]} // Default to Long Beach/LA area
-      zoom={10}
+      style={{ background: '#242424' }}
+      center={[15, 0]}
+      zoom={3}
       zoomControl={false}
       attributionControl
+      minZoom={3} // Prevents shrinking to square on standard screens
+      worldCopyJump={false}
+      maxBounds={[[-85, -180], [85, 180]]}
+      maxBoundsViscosity={1.0}
     >
+      <MapViewFitBounds />
       <MapViewListener onUpdate={handleUpdate} />
-      {/* Base Tiles */}
+
       <TileLayer
         url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
         attribution="&copy; ESRI"
         maxZoom={15}
+        noWrap={true}
+        bounds={[[-85, -180], [85, 180]]} // Prevent "Map data not available" by strictly capping requests
       />
 
-      {/* Controls */}
       <ZoomControl position="bottomright" />
       <ScaleControl position="bottomleft" imperial={false} />
 
-      {/* Zones */}
       <ZoneLayer visibleZoneTypes={visibleZoneTypes} />
 
-      {/* Background AIS Tracks */}
       <AISTrackLayer
         show={showTracks}
         playbackTime={playbackTime}
@@ -159,7 +182,6 @@ export const MapView = ({
           }))}
       />
 
-      {/* Vessels */}
       {vessels.map((vessel) => (
         <VesselMarker
           key={vessel.id}
@@ -169,16 +191,12 @@ export const MapView = ({
           onClick={onVesselSelect}
           zoom={zoom}
           playbackTime={playbackTime}
+          timeRangeMs={timeRangeMs}
         />
       ))}
 
-      {/* Auto focus to selected vessel */}
       <MapFocusVessel vessel={selectedVessel} />
-
-      {/* Initial center on load if no selection */}
       <MapInitialCenter vessels={vessels} enabled={!selectedVessel} />
-
-      {/* Deselect handler */}
       <MapClickHandler onClick={() => onVesselSelect(null)} />
     </MapContainer>
   );

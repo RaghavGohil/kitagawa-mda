@@ -21,7 +21,10 @@ from shared.config import IMAGES_DIR, INFERENCE_SERVER_URL
 from shared.schemas import InferenceResponse, PipelineStatus
 from backend_server.db.connection import get_db, async_session
 from backend_server.db.models import ProcessedImage
-from backend_server.services.ingestion import search_recent_images
+from backend_server.services.ingestion import search_recent_images, cleanup_uncorrelated_ais
+from backend_server.services.chips import generate_and_upload_chips
+from backend_server.services.correlation import run_correlation
+from shared.utils import check_resources
 
 def parse_iso_datetime(dt_str: str | None) -> datetime | None:
     """Robust ISO 8601 parsing for detection timestamps."""
@@ -219,18 +222,25 @@ async def _run_pipeline_task(image_names: list[str]):
     from backend_server.db.connection import async_session
     from backend_server.services.ingestion import (
         download_and_ingest_ais,
-        download_images,
         download_landmask,
+        cleanup_uncorrelated_ais,
     )
-    from backend_server.services.correlation import run_correlation
-    from backend_server.services.chips import generate_and_upload_chips
-
+    from backend_server.services.boundaries import ensure_local_boundaries
     try:
         # Step 0: Emergency storage cleanup
         cleanup_orphaned_downloads()
 
-        # Step 1: Pre-requisites (Landmask and AIS)
+        # Step 1: Pre-requisites (Landmask, Boundaries, and AIS)
         loop = asyncio.get_event_loop()
+
+        _pipeline_status.progress = 0.05
+        _pipeline_status.message = "Downloading maritime boundaries..."
+        _pipeline_status.current_stage = "Boundary Initialization"
+        await broadcast_status()
+        try:
+            await ensure_local_boundaries()
+        except Exception as be:
+            print(f"[Pipeline] Boundary download failed (non-fatal): {be}")
 
         _pipeline_status.progress = 0.1
         _pipeline_status.message = "Downloading landmask..."
@@ -250,6 +260,13 @@ async def _run_pipeline_task(image_names: list[str]):
         _current_image_weight = 0.7 / max(1, len(images_to_process))
         
         for i, image_name in enumerate(images_to_process):
+            # Proactive resource check BEFORE each image
+            ok, msg = check_resources(min_disk_gb=1.0)
+            if not ok:
+                print(f"[Pipeline] Low disk space detected ({msg}). Triggering emergency cleanup...")
+                async with async_session() as db:
+                    await cleanup_uncorrelated_ais(db, preserve_days=1)
+            
             _current_base_total = 0.2 + i * _current_image_weight
             _pipeline_status.progress = _current_base_total
             _pipeline_status.message = f"Processing image {i+1}/{len(images_to_process)}: {image_name}"
@@ -290,6 +307,12 @@ async def _run_pipeline_task(image_names: list[str]):
                     await broadcast_status()
             except Exception as e:
                 print(f"[Pipeline] Failed to process {image_name}: {e}")
+                
+                # Emergency Storage Recovery if it looks like a disk issue
+                if "No space left on device" in str(e) or "[Errno 28]" in str(e):
+                    async with async_session() as db:
+                        await cleanup_uncorrelated_ais(db, preserve_days=1)
+                
                 _pipeline_status.failed_images.append(image_name)
                 _pipeline_status.message = f"Failed to process {image_name}: {str(e)}"
                 await broadcast_status()
@@ -337,22 +360,30 @@ async def _run_pipeline_task(image_names: list[str]):
                         )
                     await db.commit()
 
+                    await broadcast_status()
+
             # Generate Chips (while image is still on disk)
             _pipeline_status.progress = _current_base_total + _current_image_weight * 0.70
             _pipeline_status.current_stage = "Generating Map Chips"
             await broadcast_status()
-            async with async_session() as db:
-                await generate_and_upload_chips(db)
-
-            # Cleanup this image immediately (if folder exists from old runs)
-            import shutil
-            folder = os.path.join(IMAGES_DIR, image_name)
-            if os.path.exists(folder):
-                shutil.rmtree(folder)
-            zip_path = folder + ".zip"
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
             
+            try:
+                async with async_session() as db:
+                    await generate_and_upload_chips(db, image_name=image_name)
+                await broadcast_status() # STREAMING UPDATE
+            except Exception as ce:
+                print(f"[Pipeline] Chip generation error for {image_name}: {ce}")
+            finally:
+                # Cleanup this image immediately (even if something failed)
+                import shutil
+                folder = os.path.join(IMAGES_DIR, image_name)
+                if os.path.exists(folder):
+                    print(f"[Pipeline] Cleaning up image folder: {image_name}")
+                    shutil.rmtree(folder)
+                zip_path = folder + ".zip"
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+
             # AIS Sync for this image
             _pipeline_status.progress = _current_base_total + _current_image_weight * 0.80
             _pipeline_status.message = f"Syncing AIS data for {image_name}..."
@@ -361,6 +392,7 @@ async def _run_pipeline_task(image_names: list[str]):
             try:
                 async with async_session() as db:
                     await download_and_ingest_ais([image_name], db)
+                await broadcast_status() # STREAMING UPDATE
             except Exception as ae:
                 print(f"[Pipeline] AIS sync error for {image_name}: {ae}")
 
@@ -379,30 +411,19 @@ async def _run_pipeline_task(image_names: list[str]):
 
             async with async_session() as db:
                 correlated = await run_correlation(db, progress_callback=_local_correlation_progress)
+            await broadcast_status() # STREAMING UPDATE
 
-            _pipeline_status.processed_images.append(image_name)
             _pipeline_status.progress = _current_base_total + _current_image_weight # Mark as completely done
             await broadcast_status()
             
             # Record in DB that this image is done
             async with async_session() as db:
-                await db.execute(
-                    text("INSERT INTO processed_images (image_name, sensor_type) VALUES (:name, :sensor) ON CONFLICT (image_name) DO NOTHING"),
-                    {"name": image_name, "sensor": "SAR" if "S1" in image_name else "EO"}
-                )
+                # Determine sensor type for the image
+                instrument = "SAR" if "S1" in image_name else "EO"
+                db.add(ProcessedImage(image_name=image_name, sensor_type=instrument))
                 await db.commit()
 
-        # Step 6: Global thumbnail update at the very end
-        _pipeline_status.progress = 0.95
-        _pipeline_status.message = "Updating thumbnails..."
-        _pipeline_status.current_stage = "Thumbnail Generation"
-        _pipeline_status.chips_progress = 0.0
-        await broadcast_status()
-        async with async_session() as db:
-            await generate_and_upload_chips(db, progress_callback=_on_chips_progress)
-        _pipeline_status.chips_progress = 100.0
-        _pipeline_status.progress = 1.0
-        await broadcast_status()
+
 
         _pipeline_status = PipelineStatus(
             status="completed",
@@ -432,11 +453,31 @@ async def start_background_ingest_polling():
     # Emergency reset of status on startup to ensure loop can run
     global _pipeline_status
     _pipeline_status = PipelineStatus(status="idle", message="System startup - status reset")
+    
+    # Pre-populate processed images from DB
+    try:
+        async with async_session() as db:
+            res = await db.execute(text("SELECT image_name FROM processed_images"))
+            p_names = [r[0] for r in res.all()]
+            _pipeline_status.processed_images = p_names
+            print(f"[Pipeline] Startup: Restored {_pipeline_status.processed_images} processed images from DB.")
+    except Exception as e:
+        print(f"[Pipeline] Startup: Failed to restore processed images: {e}")
+
     await broadcast_status()
 
     while True:
         try:
             print("[Pipeline] Polling loop iteration starting...", flush=True)
+            
+            # 0. Proactive resource check & emergency cleanup
+            from shared.utils import check_resources
+            ok, msg = check_resources(min_disk_gb=1.0)
+            if not ok:
+                print(f"[Pipeline] Low disk in polling: {msg}. Pruning AIS tracks...")
+                from backend_server.services.ingestion import cleanup_uncorrelated_ais
+                async with async_session() as db:
+                    await cleanup_uncorrelated_ais(db)
             # 1. Fetch already processed images to avoid re-discovery
             async with async_session() as db:
                 result = await db.execute(text("SELECT image_name FROM processed_images"))
@@ -445,7 +486,8 @@ async def start_background_ingest_polling():
 
             # 2. Search for images in 2025 filling the DB with compatible data
             s_date = "2025-01-01T00:00:00.000Z"
-            e_date = "2025-06-01T00:00:00.000Z"
+            # Expansion: Search entire 2025 and 2026
+            e_date = "2027-01-01T00:00:00.000Z"
             
             print(f"[Pipeline] Polling: Searching for images between {s_date} and {e_date}...", flush=True)
             # SAR (Sentinel-1)
@@ -474,14 +516,16 @@ async def start_background_ingest_polling():
             if eo_new:
                 print(f"  - New EO samples: {[p['name'] for p in eo_new[:3]]}", flush=True)
             
-            s1a_batch = [p for p in sar_new if p["name"].startswith("S1A")][:2] # Smaller batches for debugging
-            s1b_batch = [p for p in sar_new if p["name"].startswith("S1B")][:2]
+            s1a_batch = [p for p in sar_new if p["name"].startswith("S1A")]
+            s1b_batch = [p for p in sar_new if p["name"].startswith("S1B")]
             
-            s2a_batch = [p for p in eo_new if p["name"].startswith("S2A")][:2]
-            s2b_batch = [p for p in eo_new if p["name"].startswith("S2B")][:2]
+            s2a_batch = [p for p in eo_new if p["name"].startswith("S2A")]
+            s2b_batch = [p for p in eo_new if p["name"].startswith("S2B")]
             
-            # Combine into final target batch
-            target_batch = [p["name"] for p in (s1a_batch + s1b_batch + s2a_batch + s2b_batch)]
+            # Combine and sort newest-first by timestamp
+            all_new = s1a_batch + s1b_batch + s2a_batch + s2b_batch
+            all_new.sort(key=lambda p: p.get("timestamp", ""), reverse=True)
+            target_batch = [p["name"] for p in all_new]
             
             print(f"[Pipeline] Polling: Selected batch size: {len(target_batch)}", flush=True)
             if target_batch:
@@ -501,7 +545,7 @@ async def start_background_ingest_polling():
 
                 # 4. Trigger a new run if not already running
                 if _pipeline_status.status != "running":
-                    print(f"[Pipeline] Polling: Triggering background task for batch {target_batch[:2]}...", flush=True)
+                    print(f"[Background Ingest] Starting pipeline for {len(target_batch)} new images: {target_batch}")
                     _pipeline_status = PipelineStatus(
                         status="running",
                         progress=0.0,
@@ -515,14 +559,15 @@ async def start_background_ingest_polling():
                 else:
                     print("[Pipeline] Polling: Pipeline already running. Skipping trigger.", flush=True)
             else:
-                print("[Pipeline] Polling: No new products found. Waiting 1h...", flush=True)
-                await asyncio.sleep(3600)
+                print("[Pipeline] Polling: No new products found. Waiting 10m...", flush=True)
+                await asyncio.sleep(600)
                 continue
             
         except Exception as e:
             print(f"[Pipeline] Background polling error: {e}", flush=True)
             import traceback
             traceback.print_exc()
+            await asyncio.sleep(20) # Error backoff
         
-        print("[Pipeline] Polling loop complete. Sleeping 1h...", flush=True)
-        await asyncio.sleep(3600)
+        print("[Pipeline] Polling loop complete. Sleeping 10m...", flush=True)
+        await asyncio.sleep(600)

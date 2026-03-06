@@ -10,3 +10,4 @@ Shapely
 tqdm
 numpy
 scipy
+psutil

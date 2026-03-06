@@ -15,13 +15,14 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Generator
 
 import numpy as np
 import torch
 from ultralytics import YOLO
 
 from shared.schemas import Detection, SensorType
+from shared.utils import get_memory_usage_mb, check_resources
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +111,10 @@ class SensorAdapter(ABC):
         ...
 
     @abstractmethod
-    def preprocess_image(self, safe_folder: str, metadata: ImageMetadata) -> list[PatchBatch]:
+    def preprocess_image(self, safe_folder: str, metadata: ImageMetadata) -> Generator[PatchBatch, None, None]:
         """
         Read the image from a SAFE folder and generate patch batches.
-        Returns a list of PatchBatch objects ready for run_inference().
+        Yields PatchBatch objects one by one for run_inference().
         """
         ...
 
@@ -212,10 +213,16 @@ class SensorAdapter(ABC):
         parse metadata → preprocess → run inference on all batches.
         """
         metadata = self.parse_metadata(safe_folder)
-        batches = self.preprocess_image(safe_folder, metadata)
-
         all_detections: list[Detection] = []
-        for batch in batches:
+        
+        # Generator handles one batch at a time to minimize memory
+        for batch in self.preprocess_image(safe_folder, metadata):
+            # Proactive resource check before each batch
+            ok, msg = check_resources(min_disk_gb=0.5, max_mem_pct=95.0)
+            if not ok:
+                print(f"[Inference] Aborting: {msg}")
+                break
+            
             all_detections.extend(self.run_inference(batch))
 
         return all_detections

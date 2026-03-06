@@ -15,7 +15,8 @@ import {
 } from '@/components/ui/select';
 import { RangeSlider } from '@/components/ui/range-slider';
 
-import { vesselTypeData, anomalyTypeData, Vessel } from '@/data/data';
+import { Vessel } from '@/types';
+import { vesselTypeData, anomalyTypeData } from '@/data/data';
 
 /* ===================== TYPES ===================== */
 
@@ -24,14 +25,6 @@ interface SearchFilterPanelProps {
   onFilteredVessels: (vessels: Vessel[]) => void;
   onVesselSelect: (vessel: Vessel) => void;
 }
-
-const vesselTypeOptions = [
-  { value: 'dont-apply', label: 'Don\'t Apply' },
-  ...Object.entries(vesselTypeData).map(([key, data]) => ({
-    value: key,
-    label: data.label,
-  })),
-];
 
 const anomalyTypeOptions = [
   { value: 'dont-apply', label: 'Don\'t Apply' },
@@ -49,14 +42,7 @@ export const SearchFilterPanel = ({
   onVesselSelect,
 }: SearchFilterPanelProps) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [vesselTypeFilter, setVesselTypeFilter] = useState('dont-apply');
   const [anomalyTypeFilter, setAnomalyTypeFilter] = useState('dont-apply');
-
-  // range state for speed [min, max]
-  const [speedRange, setSpeedRange] = useState<[number, number]>([0, 30]);
-  const minSpeed = 0;
-  const maxSpeed = 30;
-
   const [isExpanded, setIsExpanded] = useState(false);
 
   /* ===================== FILTER LOGIC ===================== */
@@ -69,24 +55,13 @@ export const SearchFilterPanel = ({
       filtered = filtered.filter(v =>
         v.name.toLowerCase().includes(q) ||
         v.mmsi.includes(q) ||
-        v.imo.toLowerCase().includes(q) ||
-        v.callSign.toLowerCase().includes(q)
+        (v.imo || '').toLowerCase().includes(q) ||
+        (v.callSign || '').toLowerCase().includes(q)
       );
-    }
-
-    if (vesselTypeFilter !== 'dont-apply') {
-      filtered = filtered.filter(v => v.type === vesselTypeFilter);
     }
 
     if (anomalyTypeFilter !== 'dont-apply') {
       filtered = filtered.filter(v => v.anomaly.type === anomalyTypeFilter);
-    }
-
-    if (speedRange[0] > minSpeed || speedRange[1] < maxSpeed) {
-      filtered = filtered.filter(v => {
-        const speed = v.position.speed ?? 0;
-        return speed >= speedRange[0] && speed <= speedRange[1];
-      });
     }
 
     onFilteredVessels(filtered);
@@ -94,18 +69,13 @@ export const SearchFilterPanel = ({
 
   const resetFilters = () => {
     setSearchQuery('');
-    setVesselTypeFilter('dont-apply');
     setAnomalyTypeFilter('dont-apply');
-    setSpeedRange([minSpeed, maxSpeed]);
     onFilteredVessels(vessels);
   };
 
   const hasActiveFilters =
     searchQuery.trim() ||
-    vesselTypeFilter !== 'dont-apply' ||
-    anomalyTypeFilter !== 'dont-apply' ||
-    speedRange[0] > minSpeed ||
-    speedRange[1] < maxSpeed;
+    anomalyTypeFilter !== 'dont-apply';
 
   /* ===================== QUICK SEARCH ===================== */
 
@@ -114,7 +84,7 @@ export const SearchFilterPanel = ({
       .filter(v =>
         v.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         v.mmsi.includes(searchQuery) ||
-        v.imo.toLowerCase().includes(searchQuery.toLowerCase())
+        (v.imo || '').toLowerCase().includes(searchQuery.toLowerCase())
       )
       .slice(0, 5)
     : [];
@@ -148,7 +118,7 @@ export const SearchFilterPanel = ({
         {searchResults.length > 0 && (
           <div className="mt-2 space-y-1">
             {searchResults.map(vessel => {
-              const anomalyMeta = vessel.type === 'ship' ? undefined : (vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'] : anomalyTypeData['none']);
+              const anomalyMeta = vessel.type === 'ship' ? undefined : (vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'] : anomalyTypeData['unidentified']);
 
               return (
                 <button
@@ -207,26 +177,9 @@ export const SearchFilterPanel = ({
       {/* Expanded Filters */}
       {isExpanded && (
         <div className="border-t border-border px-2 py-2 space-y-2">
-          {/* Vessel Type */}
+          {/* Anomaly Type / Classification */}
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Vessel Type</label>
-            <Select value={vesselTypeFilter} onValueChange={setVesselTypeFilter}>
-              <SelectTrigger className="bg-muted/50">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {vesselTypeOptions.map(v => (
-                  <SelectItem key={v.value} value={v.value}>
-                    {v.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Anomaly Type */}
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Anomaly Type</label>
+            <label className="text-xs text-muted-foreground">Vessel Classification</label>
             <Select value={anomalyTypeFilter} onValueChange={setAnomalyTypeFilter}>
               <SelectTrigger className="bg-muted/50">
                 <SelectValue />
@@ -239,24 +192,6 @@ export const SearchFilterPanel = ({
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          {/* Speed Range */}
-          <div className="space-y-4">
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Speed</span>
-              <span className="font-mono">
-                {speedRange[0]}–{speedRange[1]} kn
-              </span>
-            </div>
-
-            <RangeSlider
-              value={speedRange}
-              onValueChange={setSpeedRange}
-              min={minSpeed}
-              max={maxSpeed}
-              step={1}
-            />
           </div>
 
 

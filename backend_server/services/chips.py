@@ -52,59 +52,92 @@ def get_minio_client() -> Minio:
 
 # Chip generation
 # ---------------------------------------------------------------------------
-async def generate_and_upload_chips(db: AsyncSession, progress_callback: Optional[Callable[[float], Awaitable[None]]] = None) -> int:
+async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] = None, progress_callback: Optional[Callable[[float], Awaitable[None]]] = None) -> int:
     """
     For all detections without an image chip, crop the detection area
     from the source image and upload to MinIO.
 
     Returns number of chips created.
     """
+    import asyncio
     import cv2
-    import rasterio
-    from rasterio.windows import Window
+
+    # Early exit: if image_name given, verify folder exists on disk first
+    if image_name:
+        safe_folder = os.path.join(IMAGES_DIR, image_name)
+        if not os.path.isdir(safe_folder):
+            print(f"[Chips] Skipping: image folder not on disk at {safe_folder}")
+            return 0
 
     client = get_minio_client()
 
     # Find detections without chips
-    result = await db.execute(
-        text("""
+    sql_base = """
             SELECT d.id, d.image_name, d.sensor_type,
                    d.bbox_xmin, d.bbox_ymin, d.bbox_xmax, d.bbox_ymax,
                    ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon
             FROM detections d
             LEFT JOIN image_chips ic ON ic.detection_id = d.id
             WHERE ic.id IS NULL
-            ORDER BY d.id
-        """)
-    )
+    """
+    params = {}
+    if image_name:
+        sql_base += " AND d.image_name = :img"
+        params["img"] = image_name
+    
+    sql_base += " ORDER BY d.id"
+
+    result = await db.execute(text(sql_base), params)
     rows = result.fetchall()
 
     if not rows:
-        print("[Chips] No new chips to generate.")
+        print(f"[Chips] No new chips to generate{f' for {image_name}' if image_name else ''}.")
         return 0
 
+    print(f"[Chips] Processing {len(rows)} detections for chip generation...")
+
     created = 0
+    skipped = 0
     total_rows = len(rows)
+    loop = asyncio.get_event_loop()
+
     for i, row in enumerate(rows):
-        # Progress tracking
         if progress_callback:
             await progress_callback((i + 1) / total_rows * 100.0)
             
-        det_id, image_name, sensor_type = row[0], row[1], row[2]
+        det_id = row[0]
+        det_img_name = row[1]  # Avoid shadowing the function parameter
+        sensor_type = row[2]
         xmin, ymin, xmax, ymax = row[3], row[4], row[5], row[6]
         lat, lon = row[7], row[8]
 
-        chip = _extract_chip(image_name, sensor_type, xmin, ymin, xmax, ymax)
+        # Run blocking rasterio I/O in executor with timeout
+        try:
+            chip = await asyncio.wait_for(
+                loop.run_in_executor(None, _extract_chip, det_img_name, sensor_type, xmin, ymin, xmax, ymax),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            print(f"[Chips] Timeout extracting chip for detection {det_id}, skipping.")
+            skipped += 1
+            continue
+        except Exception as e:
+            print(f"[Chips] Error extracting chip {det_id}: {e}")
+            skipped += 1
+            continue
+
         if chip is None:
+            skipped += 1
             continue
 
         # Encode as PNG
         success, buffer = cv2.imencode(".png", chip)
         if not success:
+            skipped += 1
             continue
 
         # Upload to MinIO
-        minio_key = f"{sensor_type}/{image_name}/{det_id}.png"
+        minio_key = f"{sensor_type}/{det_img_name}/{det_id}.png"
         data = io.BytesIO(buffer.tobytes())
         data_len = len(buffer.tobytes())
 
@@ -118,6 +151,7 @@ async def generate_and_upload_chips(db: AsyncSession, progress_callback: Optiona
             )
         except S3Error as e:
             print(f"[Chips] MinIO upload failed for {minio_key}: {e}")
+            skipped += 1
             continue
 
         # Insert chip record
@@ -131,7 +165,7 @@ async def generate_and_upload_chips(db: AsyncSession, progress_callback: Optiona
             """),
             {
                 "det_id": det_id,
-                "img_name": image_name,
+                "img_name": det_img_name,
                 "sensor": sensor_type,
                 "key": minio_key,
                 "lon": lon,
@@ -140,9 +174,14 @@ async def generate_and_upload_chips(db: AsyncSession, progress_callback: Optiona
         )
         created += 1
 
+        # Log progress every 10 chips
+        if (i + 1) % 10 == 0:
+            print(f"[Chips] Progress: {i+1}/{total_rows} (created={created}, skipped={skipped})")
+
     await db.commit()
-    print(f"[Chips] Generated and uploaded {created} chips.")
+    print(f"[Chips] Done. Generated {created} chips, skipped {skipped}.")
     return created
+
 
 
 def get_chip_url(minio_key: str, expires_hours: int = 24) -> str:

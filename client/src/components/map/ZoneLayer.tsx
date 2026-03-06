@@ -1,60 +1,103 @@
-import { Polygon, Tooltip } from 'react-leaflet';
-import { zones, ZoneType, zoneTypeData } from '@/data/data';
+import { GeoJSON } from 'react-leaflet';
+import { ZoneType } from '@/types';
+import { zoneTypeData } from '@/data/data';
+import { useQuery } from '@tanstack/react-query';
+import { fetchBoundaries } from '@/lib/api';
+import { useMemo } from 'react';
 
 interface ZoneLayerProps {
-    visibleZoneTypes: Set<ZoneType>
+  visibleZoneTypes: Set<ZoneType>
 }
 
-/**
- * Derive Leaflet styles from zoneTypeData
- * (single source of truth)
- */
 const getZoneStyle = (type: ZoneType) => {
-  const baseColor = zoneTypeData[type].color;
+  const meta = zoneTypeData[type] || { color: '#94a3b8' };
+  const baseColor = meta.color;
 
+  if (type === 'eez') {
+    return {
+      color: baseColor,
+      fillColor: baseColor,
+      fillOpacity: 0.03,
+      weight: 0.8,
+      dashArray: '4, 4',
+      opacity: 0.3,
+    };
+  }
+
+  if (type === 'shipping_lane') {
+    return {
+      color: baseColor,
+      fillColor: baseColor,
+      fillOpacity: 0,
+      weight: 0.8,
+      dashArray: '4, 4',
+      opacity: 0.2,
+    };
+  }
+
+  if (type === 'restricted') {
+    return {
+      color: '#f87171',
+      fillColor: '#f87171',
+      fillOpacity: 0.08,
+      weight: 1.5,
+      dashArray: '3, 3',
+      opacity: 0.5,
+    };
+  }
+
+  // Default (port, etc.)
   return {
     color: baseColor,
     fillColor: baseColor,
-    fillOpacity:
-      type === 'eez' ? 0.08 :
-      type === 'shipping_lane' ? 0.06 :
-      type === 'restricted' ? 0.18 :
-      0.14,
-    weight: 2,
-    dashArray: type === 'eez' ? '8, 6' : undefined,
+    fillOpacity: 0.06,
+    weight: 1,
+    opacity: 0.4,
   };
 };
 
 export const ZoneLayer = ({
-    visibleZoneTypes
-}:ZoneLayerProps) => {
-  return (
-    <>
-      {zones
-        .filter(zone => visibleZoneTypes.has(zone.type))
-        .map(zone => {
-          const style = getZoneStyle(zone.type);
+  visibleZoneTypes
+}: ZoneLayerProps) => {
+  const { data: boundaries } = useQuery({
+    queryKey: ['boundaries', 'v2'], // v2 to bypass cache
+    queryFn: fetchBoundaries,
+    staleTime: 0,
+    retry: true,
+  });
 
-          return (
-            <Polygon
-              key={zone.id}
-              positions={zone.coordinates}
-              pathOptions={style}
-            >
-              <Tooltip sticky>
-                <div className="font-sans text-sm">
-                  <div className="font-semibold">
-                    {zone.name}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {zone.description}
-                  </div>
-                </div>
-              </Tooltip>
-            </Polygon>
-          );
-        })}
-    </>
+  // Filter features based on visible zone types
+  const filteredData = useMemo(() => {
+    if (!boundaries?.features) return null;
+
+    const filtered = boundaries.features.filter(
+      (f: any) => {
+        const type = f.properties?.type;
+        const name = f.properties?.name || "";
+        return visibleZoneTypes.has(type as ZoneType) ||
+          (visibleZoneTypes.has('shipping_lane') && name.toLowerCase().includes('shipping lane'));
+      }
+    );
+
+    if (filtered.length === 0) return null;
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: filtered,
+    };
+  }, [boundaries, visibleZoneTypes]);
+
+  if (!filteredData) return null;
+
+  return (
+    <GeoJSON
+      data={filteredData}
+      interactive={false}
+      style={(feature) => {
+        const type = feature?.properties?.type as ZoneType;
+        return getZoneStyle(type);
+      }}
+      key={JSON.stringify([...visibleZoneTypes])}
+    />
   );
 };
-

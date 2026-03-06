@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Generator
 
 import numpy as np
 import rasterio
@@ -98,7 +98,7 @@ class EOAdapter(SensorAdapter):
     # ----- Image preprocessing -----
     def preprocess_image(
         self, safe_folder: str, metadata: ImageMetadata
-    ) -> list[PatchBatch]:
+    ) -> Generator[PatchBatch, None, None]:
         band_files = metadata.extra.get("band_files", {})
         if not all(band_files.get(b) for b in ("B04", "B03", "B02")):
             return []
@@ -108,9 +108,7 @@ class EOAdapter(SensorAdapter):
         if height == 0 or width == 0:
             return []
 
-        batches: list[PatchBatch] = []
-        batch_tiles: list[np.ndarray] = []
-        batch_positions: list[tuple[int, int]] = []
+        # No longer accumulating into a list
 
         for row in range(0, height, self.stride):
             for col in range(0, width, self.stride):
@@ -126,26 +124,20 @@ class EOAdapter(SensorAdapter):
                 batch_positions.append((row, col))
 
                 if len(batch_tiles) >= self.batch_size:
-                    batches.append(
-                        PatchBatch(
-                            tiles=np.stack(batch_tiles, axis=0),
-                            positions=batch_positions,
-                            metadata=metadata,
-                        )
+                    yield PatchBatch(
+                        tiles=np.stack(batch_tiles, axis=0),
+                        positions=batch_positions,
+                        metadata=metadata,
                     )
                     batch_tiles = []
                     batch_positions = []
 
         if batch_tiles:
-            batches.append(
-                PatchBatch(
-                    tiles=np.stack(batch_tiles, axis=0),
-                    positions=batch_positions,
-                    metadata=metadata,
-                )
+            yield PatchBatch(
+                tiles=np.stack(batch_tiles, axis=0),
+                positions=batch_positions,
+                metadata=metadata,
             )
-
-        return batches
 
     # ----- Georeferencing -----
     def georeference_box(

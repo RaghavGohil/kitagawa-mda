@@ -3,12 +3,19 @@ Vessels API — correlating detections with AIS identity data.
 
 Provides vessel-centric views of detection data, grouping detections
 by their correlated MMSI for a vessel-centric map view.
+
+4-State Classification:
+  - identified:   Matched to AIS vessel (has MMSI)
+  - no_anomaly:   Matched to AIS, correlation_distance <= 500m
+  - anomaly:      Unidentified, but AIS data WAS available → suspicious
+  - unidentified: Unidentified, and AIS data was NOT available → unknown
 """
 
 from __future__ import annotations
 
 import io
 import math
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -32,6 +39,53 @@ from backend_server.db.connection import get_db
 
 router = APIRouter(prefix="/api/v1/vessels", tags=["vessels"])
 
+# ---------------------------------------------------------------------------
+# AIS Coverage Cache (TTL-based, avoids per-request DB hits)
+# ---------------------------------------------------------------------------
+_ais_coverage_cache: dict[str, bool] = {}   # date_str -> has_coverage
+_ais_coverage_cache_ts: float = 0.0
+_AIS_COVERAGE_TTL = 300  # 5 minutes
+
+
+async def _get_ais_coverage_dates(db: AsyncSession) -> dict[str, bool]:
+    """Return a dict of date_str -> has_coverage, cached for 5 minutes."""
+    global _ais_coverage_cache, _ais_coverage_cache_ts
+    now = time.time()
+    if _ais_coverage_cache and (now - _ais_coverage_cache_ts) < _AIS_COVERAGE_TTL:
+        return _ais_coverage_cache
+
+    result = await db.execute(text("SELECT date, has_coverage FROM ais_coverage_dates"))
+    rows = result.fetchall()
+    cache = {}
+    for r in rows:
+        date_key = r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0])
+        cache[date_key] = bool(r[1])
+    _ais_coverage_cache = cache
+    _ais_coverage_cache_ts = now
+    return cache
+
+
+def _classify_vessel(mmsi: int, correlation_dist: float | None, detection_date: str | None, coverage: dict[str, bool]) -> str:
+    """
+    4-State classification:
+      - 'identified'   : mmsi > 0 (matched to AIS)
+      - 'no_anomaly'   : mmsi > 0 AND correlation_distance <= 500m
+      - 'anomaly'      : mmsi is NULL/0, but AIS data was available for that date
+      - 'unidentified' : mmsi is NULL/0, and AIS data was NOT available for that date
+    """
+    if mmsi and mmsi > 0:
+        if correlation_dist is not None and correlation_dist <= 500:
+            return "no_anomaly"
+        return "identified"
+
+    # Unidentified — check if AIS was available
+    if detection_date:
+        date_key = detection_date[:10]  # "YYYY-MM-DD"
+        if coverage.get(date_key, False):
+            return "anomaly"
+
+    return "unidentified"
+
 
 @router.get("")
 async def get_vessels(
@@ -49,6 +103,9 @@ async def get_vessels(
     Get vessels (correlated detections).
     Optionally filter by bounding box, anomaly status, or sensor type.
     """
+    # Preload AIS coverage dates (cached)
+    coverage = await _get_ais_coverage_dates(db)
+
     where_clauses = []
     params = {"limit": limit}
 
@@ -65,68 +122,75 @@ async def get_vessels(
 
     where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
+    # Simplified query — no more expensive EXISTS/LATERAL per row
     sql = text(f"""
-        WITH grouped_detections AS (
-            SELECT
-                COALESCE(mmsi, -id) AS v_id,
-                COUNT(*) AS detection_count,
-                AVG(confidence) AS avg_confidence,
-                MAX(detection_datetime) AS last_seen,
-                AVG(ST_Y(geom)) AS lat,
-                AVG(ST_X(geom)) AS lon,
-                ARRAY_AGG(sensor_type) AS sensor_types,
-                AVG(correlation_distance_m) AS avg_dist,
-                MAX(custom_name) AS display_name,
-                MAX(COALESCE(mmsi, 0)) as real_mmsi
-            FROM detections
-            WHERE {where_str}
-            GROUP BY COALESCE(mmsi, -id)
-        )
-        SELECT 
-            gd.*,
-            lat_ais.sog as ais_sog,
-            lat_ais.cog as ais_cog,
-            EXISTS(
-                SELECT 1 FROM ais_tracks a 
-                WHERE a.timestamp >= DATE_TRUNC('day', gd.last_seen) 
-                  AND a.timestamp < DATE_TRUNC('day', gd.last_seen) + INTERVAL '1 day'
-                LIMIT 1
-            ) as ais_present
-        FROM grouped_detections gd
-        LEFT JOIN LATERAL (
-            SELECT sog, cog
-            FROM ais_tracks a
-            WHERE a.mmsi = gd.real_mmsi AND gd.real_mmsi > 0
-            ORDER BY ABS(EXTRACT(EPOCH FROM (a.timestamp - gd.last_seen))) ASC
-            LIMIT 1
-        ) lat_ais ON true
-        ORDER BY gd.last_seen DESC
+        SELECT
+            COALESCE(mmsi, -MIN(id)) AS v_id,
+            COUNT(*) AS detection_count,
+            AVG(confidence) AS avg_confidence,
+            MAX(detection_datetime) AS last_seen,
+            AVG(ST_Y(geom)) AS lat,
+            AVG(ST_X(geom)) AS lon,
+            ARRAY_AGG(sensor_type) AS sensor_types,
+            AVG(correlation_distance_m) AS avg_dist,
+            MAX(custom_name) AS display_name,
+            MAX(COALESCE(mmsi, 0)) as real_mmsi
+        FROM detections
+        WHERE {where_str}
+        GROUP BY 
+            mmsi,
+            CASE WHEN mmsi IS NULL THEN ST_SnapToGrid(geom, 0.0005) ELSE NULL END
+        ORDER BY last_seen DESC
         LIMIT :limit
     """)
 
     result = await db.execute(sql, params)
     rows = result.fetchall()
 
+    # Batch-fetch SOG/COG for identified vessels
+    identified_mmsis = [int(r[9]) for r in rows if r[9] and int(r[9]) > 0]
+    ais_info = {}
+    if identified_mmsis:
+        ais_result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (mmsi) mmsi, sog, cog
+                FROM ais_tracks
+                WHERE mmsi = ANY(:mmsis)
+                ORDER BY mmsi, timestamp DESC
+            """),
+            {"mmsis": identified_mmsis}
+        )
+        for ar in ais_result.fetchall():
+            ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
+
+    vessels = []
+    for r in rows:
+        real_mmsi = int(r[9]) if r[9] else 0
+        last_seen_str = r[3].isoformat() if r[3] else None
+        avg_dist = float(r[7]) if r[7] is not None else None
+
+        anomaly_type = _classify_vessel(real_mmsi, avg_dist, last_seen_str, coverage)
+        ais = ais_info.get(real_mmsi, {})
+
+        vessels.append({
+            "mmsi": real_mmsi,
+            "v_id": r[0],
+            "name": r[8] if r[8] else (f"Vessel {real_mmsi}" if real_mmsi > 0 else f"Unidentified {abs(r[0])}"),
+            "detection_count": r[1],
+            "avg_confidence": _safe_round(r[2], 4),
+            "last_seen": last_seen_str,
+            "lat": _safe_round(r[4], 6),
+            "lon": _safe_round(r[5], 6),
+            "sensor_types": list(set(r[6])) if r[6] else [],
+            "anomaly_type": anomaly_type,
+            "is_identified": real_mmsi > 0,
+            "sog": _safe_round(ais.get("sog"), 2),
+            "cog": _safe_round(ais.get("cog"), 2),
+        })
+
     return {
-        "vessels": [
-            {
-                "mmsi": r[9],  # Real MMSI (0 if uncorrelated)
-                "v_id": r[0],  # Unique grouping ID
-                "name": r[8] if r[8] else (f"Vessel {r[9]}" if r[9] != 0 else f"Unidentified {abs(r[0])}"),
-                "detection_count": r[1],
-                "avg_confidence": _safe_round(r[2], 4),
-                "last_seen": r[3].isoformat() if r[3] else None,
-                "lat": _safe_round(r[4], 6),
-                "lon": _safe_round(r[5], 6),
-                "sensor_types": list(set(r[6])) if r[6] else [],
-                "anomaly_type": "none" if r[9] > 0 else ("anomaly" if r.ais_present else "none"),
-                "is_identified": r[9] > 0,
-                "sog": _safe_round(r.ais_sog, 2),
-                "cog": _safe_round(r.ais_cog, 2)
-            }
-            for r in rows
-        ],
-        "total": len(rows),
+        "vessels": vessels,
+        "total": len(vessels),
     }
 
 
@@ -166,6 +230,8 @@ async def get_vessel(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed information about a specific vessel."""
+    coverage = await _get_ais_coverage_dates(db)
+
     is_unidentified = mmsi < 0
     where_clause = "d.id = :mmsi_val" if is_unidentified else "d.mmsi = :mmsi_val"
     mmsi_val = abs(mmsi) if is_unidentified else mmsi
@@ -186,29 +252,16 @@ async def get_vessel(
         {"mmsi_val": mmsi_val},
     )
     det_rows = det_result.fetchall()
-    
-    # Check if AIS data is present for the day of the first detection
-    ais_present = False
-    if det_rows and det_rows[0][4]:
-        det_date = det_rows[0][4].date()
-        import datetime
-        dt_start = datetime.datetime.combine(det_date, datetime.time.min)
-        dt_end = dt_start + datetime.timedelta(days=1)
-        
-        ais_check = await db.execute(
-            text("""
-                SELECT 1 FROM ais_tracks
-                WHERE timestamp >= :dt_start AND timestamp < :dt_end
-                LIMIT 1
-            """),
-            {
-                "dt_start": dt_start,
-                "dt_end": dt_end
-            }
-        )
-        ais_present = ais_check.fetchone() is not None
 
-    anomaly_type = "none" if not is_unidentified else ("anomaly" if ais_present else "none")
+    # Classify using detection date
+    det_datetime_str = det_rows[0][4].isoformat() if (det_rows and det_rows[0][4]) else None
+    avg_dist = det_rows[0][5] if det_rows else None
+    anomaly_type = _classify_vessel(
+        0 if is_unidentified else mmsi_val,
+        avg_dist,
+        det_datetime_str,
+        coverage
+    )
 
     # Latest AIS track snippet
     ais_result = await db.execute(
@@ -256,7 +309,7 @@ async def get_vessel(
 
     return {
         "mmsi": mmsi_val if not is_unidentified else 0,
-        "v_id": mmsi, # This is the unique grouping key
+        "v_id": mmsi,  # This is the unique grouping key
         "name": det_rows[0][9] if (det_rows and det_rows[0][9]) else (f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"),
         "detection_count": len(detections),
         "anomaly_type": anomaly_type,

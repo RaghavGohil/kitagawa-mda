@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Logo from '/logo.svg';
 import { Button } from '@/components/ui/button';
-import { X, Loader2, CheckCircle2, Clock } from 'lucide-react';
+import { X, Loader2, Clock, AlertCircle, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { usePipelineStatus } from '@/hooks/useVessels';
 import { Progress } from "@/components/ui/progress";
@@ -25,6 +25,7 @@ export const Header = () => {
 
 
   const isRunning = status?.status === 'running';
+  const isFailed = status?.status === 'failed';
   const pendingCount = (status?.queued_images?.length || 0) + (status?.current_image ? 1 : 0);
 
   // Get current stage progress value
@@ -54,6 +55,22 @@ export const Header = () => {
     }
   }, [status, getStageProgress]);
 
+  // Auto-open queue modal when pipeline fails
+  useEffect(() => {
+    if (isFailed) {
+      setIsQueueOpen(true);
+    }
+  }, [isFailed]);
+
+  // Get status label and color
+  const getStatusInfo = () => {
+    if (isFailed) return { label: 'Pipeline Failed', color: 'text-red-400' };
+    if (isRunning) return { label: 'Processing Active', color: 'text-primary' };
+    return { label: 'System Idle', color: 'text-muted-foreground text-opacity-40' };
+  };
+
+  const statusInfo = getStatusInfo();
+
   return (
     <>
       {/* Navbar */}
@@ -72,16 +89,17 @@ export const Header = () => {
         <div className="flex items-center gap-4">
           <div className="flex flex-col items-end mr-2">
             <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest leading-none">Status</span>
-            <span className={pendingCount > 0 ? "text-xs font-semibold text-primary" : "text-xs font-semibold text-muted-foreground text-opacity-40"}>
-              {pendingCount > 0 ? 'Processing Active' : 'System Idle'}
+            <span className={`text-xs font-semibold ${statusInfo.color}`}>
+              {statusInfo.label}
             </span>
           </div>
 
           <Button
-            className="rounded-lg border bg-transparent hover:bg-muted text-white flex gap-2 h-9"
+            className={`rounded-lg border bg-transparent hover:bg-muted text-white flex gap-2 h-9 ${isFailed ? 'border-red-500/50 animate-pulse' : ''}`}
             onClick={() => setIsQueueOpen(true)}
           >
             {isRunning && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {isFailed && <XCircle className="w-3.5 h-3.5 text-red-400" />}
             Image Queue ({pendingCount})
           </Button>
         </div>
@@ -108,6 +126,44 @@ export const Header = () => {
 
             {/* Queue List */}
             <div className="p-6 space-y-8 overflow-y-auto">
+
+              {/* PIPELINE ERROR / FAILURE MESSAGE */}
+              {isFailed && (
+                <div className="space-y-3">
+                  <h4 className="text-[10px] uppercase font-black tracking-widest text-red-400 flex items-center gap-2">
+                    <XCircle className="w-3.5 h-3.5" /> Pipeline Error
+                  </h4>
+                  <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-xl space-y-2">
+                    <p className="text-sm text-red-300 font-medium">
+                      {status?.message || 'An unknown error occurred during processing.'}
+                    </p>
+                    {status?.current_image && (
+                      <p className="text-xs text-muted-foreground">
+                        Failed while processing: <span className="font-mono font-bold text-red-400/80">{status.current_image}</span>
+                      </p>
+                    )}
+                    {status?.started_at && status?.completed_at && (
+                      <p className="text-[10px] text-muted-foreground/60">
+                        Duration: {(() => {
+                          const start = new Date(status.started_at).getTime();
+                          const end = new Date(status.completed_at).getTime();
+                          const secs = Math.round((end - start) / 1000);
+                          return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+                        })()}
+                      </p>
+                    )}
+                    {/* Failed images list */}
+                    {status?.failed_images && status.failed_images.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-red-500/20">
+                        <p className="text-[10px] uppercase font-bold text-red-400/70 mb-1">Failed Images</p>
+                        {status.failed_images.map((img) => (
+                          <p key={img} className="text-xs font-mono text-muted-foreground/70 break-all">{img}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* CURRENTLY PROCESSING */}
               {status?.current_image && isRunning && (
@@ -136,6 +192,7 @@ export const Header = () => {
                   </div>
                 </div>
               )}
+
 
               {/* QUEUED IMAGES */}
               {status?.queued_images && status.queued_images.length > 0 && (

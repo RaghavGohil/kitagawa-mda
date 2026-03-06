@@ -1,4 +1,4 @@
-import { Vessel, Alert, DashboardStats, AnomalyType } from "@/data/data";
+import { Vessel, Alert, DashboardStats, AnomalyType } from "@/types";
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -32,7 +32,7 @@ interface ApiVesselSummary {
   lat: number;
   lon: number;
   sensor_types: string[];
-  anomaly_type: "none" | "anomaly";
+  anomaly_type: "identified" | "no_anomaly" | "anomaly" | "unidentified";
   is_identified: boolean;
   cog?: number | null;
   sog?: number | null;
@@ -54,49 +54,27 @@ function transformVesselSummary(api: ApiVesselSummary): Vessel {
   return {
     id: `vessel-${api.v_id}`,
     mmsi: mmsiVal > 0 ? mmsiVal.toString() : "",
-    imo: isIdentified ? "9000000" : "",
     name: api.name,
-    callSign: isIdentified ? generateCallSign() : "",
-    flag: isIdentified ? "International" : "Unknown",
     type: isIdentified ? "ship" : "unidentified",
-    length: 150,
-    width: 25,
-    draught: 10,
-    destination: "Open Sea",
-    eta: null,
     position: {
       lat: api.lat,
       lng: api.lon,
       timestamp: new Date(api.last_seen),
-      speed: api.sog ?? 12.5, // Use actual SOG if available, otherwise placeholder
-      heading: api.cog ?? Math.abs((api.v_id * 137 + 42) % 360), // Use actual COG if available
+      speed: api.sog ?? 0,
+      heading: api.cog ?? 0,
       course: api.cog ?? 0,
     },
     track: [],
     anomaly: {
-      type: api.anomaly_type || "none",
+      type: api.anomaly_type || "unidentified",
       confidence: api.avg_confidence,
       description: "",
-    },
-    behaviorProfile: {
-      typicalSpeed: { min: 5, max: 18, avg: 11.5 },
-      typicalRoutes: [],
-      deviationScore: 0.1,
     },
     imageName: api.sensor_types?.[0] || "Unknown",
   };
 }
 
-function generateCallSign(): string {
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  return (
-    letters[Math.floor(Math.random() * letters.length)] +
-    letters[Math.floor(Math.random() * letters.length)] +
-    Math.floor(Math.random() * 10000)
-      .toString()
-      .padStart(4, "0")
-  );
-}
+
 
 // API Functions
 export async function fetchVessels(options?: {
@@ -165,23 +143,15 @@ export async function fetchVessel(vesselId: string): Promise<Vessel> {
   return {
     id: vId,
     mmsi: mmsiStr,
-    imo: isUnidentified ? "" : `IMO${Math.floor(9000000 + (data.mmsi % 1000000))}`,
     name: data.name,
-    callSign: isUnidentified ? "" : generateCallSign(),
-    flag: isUnidentified ? "Unknown" : "International",
     type: isUnidentified ? "unidentified" : "ship",
-    length: 150,
-    width: 25,
-    draught: 10,
-    destination: "Open Sea",
-    eta: null,
     position: {
       lat: latestDetection.lat || latestTrack.lat || 0,
       lng: latestDetection.lon || latestTrack.lon || 0,
       timestamp: new Date(latestDetection.detection_datetime || latestTrack.timestamp || Date.now()),
-      speed: latestTrack.sog || 12.5,
-      heading: latestTrack.cog || Math.abs((data.v_id * 137 + 42) % 360),
-      course: latestTrack.cog || 0,
+      speed: latestTrack.sog ?? 0,
+      heading: latestTrack.cog ?? 0,
+      course: latestTrack.cog ?? 0,
     },
     track: data.recent_track.map((t: any) => ({
       lat: t.lat,
@@ -192,14 +162,9 @@ export async function fetchVessel(vesselId: string): Promise<Vessel> {
       course: t.cog,
     })),
     anomaly: {
-      type: data.anomaly_type || "none",
+      type: data.anomaly_type || "unidentified",
       confidence: latestDetection.confidence || 0,
       description: "",
-    },
-    behaviorProfile: {
-      typicalSpeed: { min: 5, max: 18, avg: 11.5 },
-      typicalRoutes: [],
-      deviationScore: 0.1,
     },
     chipUrl,
     imageName: latestDetection.image_name,
@@ -221,7 +186,7 @@ export async function fetchAlerts(limit?: number): Promise<Alert[]> {
       id: alert.id,
       vesselId: alert.vessel_id,
       vesselName: alert.vessel_name,
-      type: "anomaly" as AnomalyType,
+      type: alert.type as "anomaly" | "unidentified_in_coverage",
       timestamp: new Date(alert.timestamp),
     }),
   );
@@ -303,4 +268,12 @@ export async function checkApiHealth(): Promise<boolean> {
   }
 }
 
-export { transformVesselSummary, generateCallSign };
+export async function fetchBoundaries(): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/boundaries?cb=${Date.now()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch boundaries: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export { transformVesselSummary };

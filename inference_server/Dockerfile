@@ -36,8 +36,16 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
     gdal-bin \
     libglib2.0-0 \
-    curl && \
+    curl \
+    unzip && \
     rm -rf /var/lib/apt/lists/*
+
+# Pre-download Landmask (Internal to Image)
+WORKDIR /app/landmask
+RUN curl -L http://www.soest.hawaii.edu/pwessel/gshhg/gshhg-shp-2.3.7.zip -o gshhg.zip && \
+    unzip gshhg.zip && \
+    rm gshhg.zip
+WORKDIR /app
 
 # Copy installed python packages from builder
 COPY --from=builder /root/.local /root/.local

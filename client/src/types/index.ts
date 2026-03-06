@@ -1,0 +1,67 @@
+export type VesselType = "ship" | "unidentified";
+export type AnomalyType = "identified" | "no_anomaly" | "anomaly" | "unidentified";
+
+export type ZoneType = "eez" | "restricted" | "port" | "shipping_lane";
+
+export interface VesselPosition {
+    lat: number;
+    lng: number;
+    timestamp: Date;
+    speed: number; // knots
+    heading: number; // degrees
+    course: number; // degrees
+}
+
+export interface Vessel {
+    id: string;
+    mmsi: string;
+    imo?: string;
+    name: string;
+    callSign?: string;
+    flag?: string;
+    type: VesselType;
+    length?: number;
+    width?: number;
+    draught?: number;
+    destination?: string;
+    eta?: Date | null;
+    position: VesselPosition;
+    track: VesselPosition[];
+    anomaly: {
+        type: AnomalyType;
+        confidence: number;
+        description: string;
+    };
+    behaviorProfile?: {
+        typicalSpeed: { min: number; max: number; avg: number };
+        typicalRoutes: string[];
+        deviationScore: number;
+    };
+    chipUrl?: string;
+    imageName?: string;
+}
+
+export interface Alert {
+    id: string;
+    vesselId: string;
+    vesselName: string;
+    type: "anomaly" | "unidentified_in_coverage";
+    timestamp: Date;
+}
+
+export interface Zone {
+    id: string;
+    name: string;
+    type: ZoneType;
+    coordinates: [number, number][];
+    description: string;
+}
+
+export interface DashboardStats {
+    activeVessels: number;
+    anomaliesDetected: number;
+    highRiskZones: number;
+    aisGaps: number;
+    averageSpeed: number;
+    vesselsByType: Record<VesselType, number>;
+}

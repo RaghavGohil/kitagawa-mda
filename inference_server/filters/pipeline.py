@@ -117,32 +117,53 @@ class FilterPipeline:
     # ------------------------------------------------------------------
     def _load_landmask(self, shp_path: str):
         """Load GSHHG land polygons and build spatial index."""
+        print(f"[FilterPipeline] Attempting to load landmask from: {shp_path}")
+        if not os.path.exists(shp_path):
+            print(f"[FilterPipeline] ERROR: Landmask file NOT FOUND at {shp_path}")
+            # Try to list directory to see what's there
+            parent = os.path.dirname(shp_path)
+            if os.path.exists(parent):
+                print(f"[FilterPipeline] Parent directory {parent} contents: {os.listdir(parent)}")
+            return
+
         try:
             import geopandas as gpd
 
             self._land_gdf = gpd.read_file(shp_path)
             self._land_gdf = self._land_gdf.to_crs(epsg=4326)
             self._land_sindex = self._land_gdf.sindex
-            print(f"[FilterPipeline] Loaded landmask with {len(self._land_gdf)} polygons")
+            print(f"[FilterPipeline] SUCCESS: Loaded landmask with {len(self._land_gdf)} polygons")
         except Exception as e:
-            print(f"[FilterPipeline] Failed to load landmask: {e}", file=sys.stderr)
+            print(f"[FilterPipeline] FAILED to load landmask: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             self._land_gdf = None
 
     def _landmask_filter(self, detections: list[Detection]) -> list[Detection]:
         """Remove detections whose centroid falls on land."""
         from shapely.geometry import Point
 
+        if self._land_gdf is None:
+            print("[FilterPipeline] WARNING: Landmask not loaded, skipping filtering")
+            return detections
+
         kept: list[Detection] = []
+        land_count = 0
         for d in detections:
             point = Point(d.vessel_longitude, d.vessel_latitude)
             possible = list(self._land_sindex.intersection(point.bounds))
+            on_land = False
             if possible:
                 matches = self._land_gdf.iloc[possible]
                 on_land = any(poly.contains(point) for poly in matches.geometry)
-                if on_land:
-                    continue
+            
+            if on_land:
+                land_count += 1
+                continue
             kept.append(d)
 
+        if land_count > 0:
+            print(f"[FilterPipeline] Filtered out {land_count} detections on land.")
         return kept
 
     # ------------------------------------------------------------------

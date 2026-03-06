@@ -1,14 +1,16 @@
 import { Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { anomalyTypeData, vesselTypeData, Vessel } from '@/data/data';
+import { Vessel } from '@/types';
+import { anomalyTypeData, vesselTypeData } from '@/data/data';
 
 interface VesselMarkerProps {
   vessel: Vessel;
   isSelected: boolean;
   showTrack: boolean;
-  onClick: (vessel: Vessel) => void;
+  onClick: (vessel: Vessel | null) => void;
   zoom: number;
   playbackTime: Date;
+  timeRangeMs?: number;
 }
 
 /* ===================== COMPONENT ===================== */
@@ -20,34 +22,33 @@ export const VesselMarker = ({
   onClick,
   zoom,
   playbackTime,
+  timeRangeMs = 2 * 24 * 60 * 60 * 1000, // Default 2 days
 }: VesselMarkerProps) => {
   // Fixed pixel size for marker
   const size = 32;
 
   /* ===================== TIME-BASED OPACITY ===================== */
 
-  // New detections: 100% opacity
-  // Older detections (up to 24h): Fading out to 0%
+  // Normalize age relative to the playback window
   const ageMs = playbackTime.getTime() - vessel.position.timestamp.getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
 
-  let timeOpacity = 1;
-  if (ageHours > 0) {
-    // Linear fade from 1.0 at 0h to 0.0 at 24h
-    timeOpacity = Math.max(0, 1 - (ageHours / 24));
-  }
+  // Linear fade from 1.0 at age 0 to 0.3 at the start of the window
+  // Use a minimum of 0.3 opacity for anything in the window
+  const normalizedAge = Math.max(0, Math.min(1, ageMs / timeRangeMs));
+  const timeOpacity = Math.max(0.3, 1 - normalizedAge);
 
-  // If ship is too old (min opacity reached), remove from map
-  if (timeOpacity <= 0) return null;
+  // If ship is outside the window, don't show (sanity check, Index.tsx usually filters this)
+  if (ageMs < 0 || ageMs > timeRangeMs) return null;
 
   /* ===================== COLOR (HEX) ===================== */
 
   const baseColor =
     vessel.type === 'ship' ? vesselTypeData['ship'].color :
       vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'].color :
-        anomalyTypeData['none'].color;
+        anomalyTypeData['unidentified'].color;
 
   // Make fresh detections pop more
+  const ageHours = ageMs / (1000 * 60 * 60);
   const color = baseColor;
   const strokeColor = baseColor;
   const strokeWidth = isSelected ? 8 : (ageHours < 1 ? 6 : 4);
@@ -63,15 +64,13 @@ export const VesselMarker = ({
         ? 0.7
         : 1) * timeOpacity;
 
-  /* ===================== SVG ARROW ICON ===================== */
+  /* ===================== SVG ICON (arrow or dot) ===================== */
 
-  const icon = L.divIcon({
-    className: '',
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-    html: `
-      <div style="position: relative; width: ${size}px; height: ${size}px;">
-        <svg
+  const hasHeading = vessel.position.heading !== 0 && vessel.position.heading != null;
+
+  const svgContent = hasHeading
+    ? // Arrow polygon with heading rotation
+    `<svg
           width="${size}"
           height="${size}"
           viewBox="-10 -10 120 120"
@@ -93,7 +92,37 @@ export const VesselMarker = ({
             stroke-width="${strokeWidth}"
             stroke-opacity="${timeOpacity}"
           />
-        </svg>
+        </svg>`
+    : // Circle dot for unknown heading
+    `<svg
+          width="${size}"
+          height="${size}"
+          viewBox="0 0 100 100"
+          style="
+            cursor: pointer;
+            pointer-events: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+          "
+        >
+          <circle
+            cx="50" cy="50" r="${isSelected ? 32 : 24}"
+            fill="${color}"
+            fill-opacity="${(isSelected ? 0.95 : 0.7) * timeOpacity}"
+            stroke="${strokeColor}"
+            stroke-width="${strokeWidth}"
+            stroke-opacity="${timeOpacity}"
+          />
+        </svg>`;
+
+  const icon = L.divIcon({
+    className: '',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    html: `
+      <div style="position: relative; width: ${size}px; height: ${size}px;">
+        ${svgContent}
         <div style="
           opacity: ${labelOpacity};
           position: absolute;
