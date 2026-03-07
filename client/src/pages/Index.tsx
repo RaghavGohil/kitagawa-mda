@@ -217,7 +217,7 @@ const Index = () => {
           {vesselsLoading && (
             <div className="absolute top-[10px] left-1/2 -translate-x-1/2 z-[1000] bg-card/90 backdrop-blur-md px-[14px] py-[10px] rounded-xl border border-primary/30 flex items-center gap-[10px] shadow-2xl animate-in slide-in-from-top-2 duration-300">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-[10px] uppercase font-black tracking-[0.2em] text-primary animate-pulse-subtle">Updating Intelligence</span>
+              <span className="text-[10px] uppercase font-black tracking-[0.2em] text-primary animate-pulse-subtle">Updating</span>
             </div>
           )}
         </div>
