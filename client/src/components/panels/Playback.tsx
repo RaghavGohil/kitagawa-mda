@@ -1,13 +1,20 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Clock, Settings2, Radio } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Play, Pause, Clock, Settings2, Radio, Calendar, SkipBack, SkipForward, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface PlaybackProps {
   onTimeChange?: (time: Date) => void;
@@ -17,19 +24,11 @@ interface PlaybackProps {
 
 export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: PlaybackProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-
-  // Range covers 2 days before now to now
-  const [startTime, setStartTime] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 2);
-    return d;
-  });
-  const [endTime, setEndTime] = useState(() => new Date()); // Current time
-
-  const [currentTime, setCurrentTime] = useState(100); // Start at 100% = now, so all data is visible
+  const [startTime, setStartTime] = useState(() => new Date("2025-01-01T00:00:00Z"));
+  const [endTime, setEndTime] = useState(() => new Date("2025-02-01T00:00:00Z"));
+  const [currentTime, setCurrentTime] = useState(100);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  // Live mode: auto-update when slider is at the end
   const isLive = currentTime >= 99.5;
 
   const getTimeFromValue = useCallback((value: number): Date => {
@@ -47,24 +46,20 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: Playba
     onTimeChange?.(displayTime);
   }, [displayTime, onTimeChange]);
 
-  // Broadcast the time range whenever it changes
   useEffect(() => {
     onTimeRangeChange?.(startTime, endTime);
   }, [startTime, endTime, onTimeRangeChange]);
 
-  // Live mode: tick endTime forward every 5 seconds
   useEffect(() => {
     if (!isLive) return;
-
     const interval = setInterval(() => {
-      setEndTime(new Date());
-      setCurrentTime(100);
+      // Don't auto-advance end time in 2025 mode unless explicitly wanted
+      // setEndTime(new Date());
+      // setCurrentTime(100);
     }, 5000);
-
     return () => clearInterval(interval);
   }, [isLive]);
 
-  // External jump: when a vessel/alert is clicked, jump to its time
   useEffect(() => {
     if (!jumpToTime) return;
     const totalMs = endTime.getTime() - startTime.getTime();
@@ -73,20 +68,15 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: Playba
     const pct = Math.max(0, Math.min(100, (targetMs / totalMs) * 100));
     setCurrentTime(pct);
     setIsPlaying(false);
-  }, [jumpToTime]);
-
-  /* ===================== PLAYBACK LOOP ===================== */
+  }, [jumpToTime, startTime, endTime]);
 
   useEffect(() => {
     if (!isPlaying) return;
-
     const interval = setInterval(() => {
       setCurrentTime(prev => {
-        // Speed scaling for longer windows (step size in percent)
         const totalMs = endTime.getTime() - startTime.getTime();
-        const stepMs = 1000 * 60 * 10 * playbackSpeed; // 10 minutes per tick at 1x
+        const stepMs = 1000 * 60 * 10 * playbackSpeed;
         const stepPercent = (stepMs / totalMs) * 100;
-
         const next = prev + stepPercent;
         if (next >= 100) {
           setIsPlaying(false);
@@ -95,75 +85,182 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: Playba
         return next;
       });
     }, 100);
-
     return () => clearInterval(interval);
   }, [isPlaying, playbackSpeed, startTime, endTime]);
 
-  /* ===================== SLIDER ===================== */
-
-  const handleSliderChange = (value: number[]) => {
-    setCurrentTime(value[0]);
-    setIsPlaying(false);
-  };
-
-  /* ===================== UI ===================== */
-
   return (
-    <div className="rounded-xl bg-background/60 backdrop-blur-xl border border-border/40 shadow-2xl p-4 transition-all duration-300 hover:bg-background/80">
-      <div className="flex flex-col gap-5">
+    <div className="rounded-xl bg-card border border-border p-[10px] w-full shadow-2xl animate-in fade-in duration-300">
+      <div className="flex flex-col gap-[10px]">
 
-        {/* Header & Main Readout */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-md bg-primary/10 text-primary">
-              <Clock className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold tracking-tight">Timeline</span>
-            {isLive && (
-              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30">
-                <Radio className="h-3 w-3 text-red-400 animate-pulse" />
-                <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Live</span>
-              </div>
-            )}
+        {/* 0. HEADER */}
+        <div className="flex items-center gap-[10px] px-[10px] py-[5px] border-b border-border/40 mb-[5px]">
+          <Timer className="h-4 w-4 text-primary" />
+          <span className="text-sm font-black uppercase tracking-widest text-foreground/80">Playback</span>
+        </div>
+
+        {/* 1. TIMELINE - VIDEO PLAYER STYLE */}
+        <div className="space-y-[10px]">
+          <div className="relative h-[9px] bg-muted/20 border border-border/40 rounded-lg cursor-pointer group/slider">
+            <div
+              className="absolute left-0 top-0 h-full bg-primary rounded-l-lg transition-none"
+              style={{ width: `${currentTime}%` }}
+            />
+            {/* Slider Handle */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-[15px] w-[15px] bg-white rounded-full shadow-lg border-2 border-primary z-10 pointer-events-none transition-none"
+              style={{ left: `${currentTime}%` }}
+            />
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={0.01}
+              value={currentTime}
+              onChange={(e) => {
+                setCurrentTime(parseFloat(e.target.value));
+                setIsPlaying(false);
+              }}
+              className="absolute left-0 top-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto z-20"
+            />
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className={`border px-4 py-1.5 rounded-lg font-mono text-sm font-bold shadow-inner ${isLive ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-primary/10 border-primary/20 text-primary'}`}>
-              {format(displayTime, "yyyy-MM-dd HH:mm")}
+          <div className="flex justify-between items-center text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-[10px]">
+            <div className="flex items-center gap-[10px]">
+              <span className="text-foreground/60">{format(startTime, "MMM dd, HH:mm")}</span>
+              <div className="h-3 w-px bg-border" />
+              <div className={cn(
+                "font-mono text-xs tracking-normal normal-case",
+                isLive ? "text-red-500" : "text-primary"
+              )}>
+                {format(displayTime, "HH:mm:ss")}
+              </div>
+            </div>
+            <div className="flex items-center gap-[10px]">
+              <span className="text-foreground/40">{isLive ? 'Present (Live)' : format(endTime, "MMM dd, HH:mm")}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. CONTROLS ROW - YOUTUBE STYLE */}
+        <div className="flex flex-col gap-[10px] pt-[10px] border-t border-border">
+
+          <div className="flex items-center justify-between">
+            {/* LEFT: MAIN ACTIONS */}
+            <div className="flex items-center gap-[10px]">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-[42px] w-[42px] btn-standard border-border/60"
+                onClick={() => {
+                  setCurrentTime(0);
+                  setIsPlaying(false);
+                }}
+                title="Jump to Start"
+              >
+                <SkipBack className="h-5 w-5 fill-muted-foreground/20" />
+              </Button>
+
+              <Button
+                onClick={() => setIsPlaying(!isPlaying)}
+                variant="outline"
+                size="icon"
+                className="h-[42px] w-[42px] btn-standard border-primary/20 bg-primary/5 hover:bg-primary/10"
+              >
+                {isPlaying ? <Pause className="h-5 w-5 text-primary fill-primary" /> : <Play className="h-5 w-5 text-primary fill-primary" />}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-[42px] w-[42px] btn-standard border-border/60"
+                onClick={() => {
+                  setCurrentTime(100);
+                  setIsPlaying(false);
+                }}
+                title="Jump to End"
+              >
+                <SkipForward className="h-5 w-5 fill-muted-foreground/20" />
+              </Button>
+
+              <div className="h-6 w-px bg-border mx-[10px]" />
+
+              <Button
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-[42px] w-[42px] btn-standard",
+                  isLive ? "border-red-500/50 text-red-500 bg-red-500/5" : "text-muted-foreground border-border/60"
+                )}
+                onClick={() => {
+                  if (!isLive) {
+                    setCurrentTime(100);
+                    setIsPlaying(false);
+                  }
+                }}
+                title="Go Live"
+              >
+                <Radio className={cn("h-5 w-5", isLive && "animate-pulse")} />
+              </Button>
             </div>
 
+            {/* CENTER: SPEED DROPDOWN */}
+            <div className="flex items-center">
+              <Select value={playbackSpeed.toString()} onValueChange={(v) => setPlaybackSpeed(parseFloat(v))}>
+                <SelectTrigger className="w-[100px] h-[42px] bg-muted/5 border-border rounded-xl font-bold text-xs ring-0 focus:ring-0">
+                  <SelectValue placeholder="Speed" />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border rounded-xl shadow-2xl">
+                  {[0.5, 1, 5, 20, 100].map((s) => (
+                    <SelectItem key={s} value={s.toString()} className="text-xs font-bold py-[10px] rounded-lg focus:bg-primary/10 focus:text-primary">
+                      {s === 1 ? 'Normal' : `${s}x`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* RIGHT: SETTINGS */}
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-muted/50">
-                  <Settings2 className="h-4 w-4 text-muted-foreground" />
+                <Button variant="outline" size="icon" className="h-[42px] w-[42px] btn-standard border-border/60">
+                  <Settings2 className="h-5 w-5" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-64 p-3 bg-background/95 backdrop-blur-xl border-border/40" align="end">
-                <div className="space-y-3">
-                  <h4 className="font-medium text-xs text-muted-foreground uppercase tracking-wider">Date Constraints</h4>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-muted-foreground uppercase font-semibold">Start Date (UTC)</label>
-                    <input
-                      type="datetime-local"
-                      className="bg-background border border-border/40 rounded-md px-2.5 py-1.5 text-xs font-mono focus:ring-2 focus:ring-primary shadow-sm"
-                      value={format(startTime, "yyyy-MM-dd'T'HH:mm")}
-                      onChange={(e) => {
-                        const date = new Date(e.target.value + 'Z');
-                        if (!isNaN(date.getTime())) setStartTime(date);
-                      }}
-                    />
+              <PopoverContent className="w-[300px] p-[10px] bg-card border-border rounded-xl shadow-2xl" align="end">
+                <div className="space-y-[10px]">
+                  <div className="flex flex-col gap-[10px]">
+                    <div className="flex items-center gap-[10px]">
+                      <Calendar className="h-[15px] w-[15px] text-foreground" />
+                      <h4 className="font-bold text-base text-foreground">Playback Settings</h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Define your operational timeframe (UTC)</p>
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-muted-foreground uppercase font-semibold">End Date (UTC)</label>
-                    <input
-                      type="datetime-local"
-                      className="bg-background border border-border/40 rounded-md px-2.5 py-1.5 text-xs font-mono focus:ring-2 focus:ring-primary shadow-sm"
-                      value={format(endTime, "yyyy-MM-dd'T'HH:mm")}
-                      onChange={(e) => {
-                        const date = new Date(e.target.value + 'Z');
-                        if (!isNaN(date.getTime())) setEndTime(date);
-                      }}
-                    />
+
+                  <div className="space-y-[10px] pt-[10px] border-t border-border">
+                    <div className="space-y-[10px]">
+                      <label className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">Search Start</label>
+                      <input
+                        type="datetime-local"
+                        className="w-full bg-muted/20 border border-border px-[10px] py-[10px] text-sm rounded-lg focus:outline-none"
+                        value={format(startTime, "yyyy-MM-dd'T'HH:mm")}
+                        onChange={(e) => {
+                          const d = new Date(e.target.value);
+                          if (!isNaN(d.getTime())) setStartTime(d);
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-[10px]">
+                      <label className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">Search End</label>
+                      <input
+                        type="datetime-local"
+                        className="w-full bg-muted/20 border border-border px-[10px] py-[10px] text-sm rounded-lg focus:outline-none"
+                        value={format(endTime, "yyyy-MM-dd'T'HH:mm")}
+                        onChange={(e) => {
+                          const d = new Date(e.target.value);
+                          if (!isNaN(d.getTime())) setEndTime(d);
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </PopoverContent>
@@ -171,77 +268,6 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime }: Playba
           </div>
         </div>
 
-        {/* Timeline Slider & Markers */}
-        <div className="px-1 group">
-          <Slider
-            value={[currentTime]}
-            onValueChange={handleSliderChange}
-            min={0}
-            max={100}
-            step={0.01}
-            className="cursor-grab active:cursor-grabbing"
-          />
-          <div className="flex justify-between text-[10px] text-muted-foreground mt-3 font-mono tracking-wider opacity-60 group-hover:opacity-100 transition-opacity">
-            <span>{format(startTime, "dd MMM HH:mm")}</span>
-            <span>{isLive ? 'NOW' : format(endTime, "dd MMM HH:mm")}</span>
-          </div>
-        </div>
-
-        {/* Playback Controls & Speed */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="w-20" /> {/* Spacer for centered layout */}
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8 rounded-full border-border/40 bg-background/50 hover:bg-muted"
-              onClick={() => setCurrentTime(0)}
-            >
-              <SkipBack className="h-3.5 w-3.5" />
-            </Button>
-
-            <Button
-              size="icon"
-              className={`h-12 w-12 rounded-full shadow-lg transition-transform ${isPlaying ? 'bg-primary/90 scale-95' : 'bg-primary hover:scale-105'}`}
-              onClick={() => setIsPlaying(p => !p)}
-            >
-              {isPlaying ? (
-                <Pause className="h-5 w-5 text-primary-foreground" />
-              ) : (
-                <Play className="h-5 w-5 text-primary-foreground ml-1" />
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8 rounded-full border-border/40 bg-background/50 hover:bg-muted"
-              onClick={() => setCurrentTime(100)}
-              title="Jump to live"
-            >
-              <SkipForward className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          {/* Speed Selection */}
-          <div className="flex items-center gap-1 bg-muted/30 p-1 rounded-full border border-border/30 w-28 justify-center">
-            {[1, 2, 4].map(speed => (
-              <button
-                key={speed}
-                className={`h-6 w-8 text-[11px] rounded-full transition-all flex items-center justify-center font-medium
-                  ${speed === playbackSpeed
-                    ? 'bg-background shadow-sm text-foreground font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                onClick={() => setPlaybackSpeed(speed)}
-              >
-                {speed}x
-              </button>
-            ))}
-          </div>
-
-        </div>
       </div>
     </div>
   );

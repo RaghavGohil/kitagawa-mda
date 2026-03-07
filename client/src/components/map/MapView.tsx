@@ -143,7 +143,7 @@ export const MapView = ({
   return (
     <MapContainer
       className="h-full w-full"
-      style={{ background: '#242424' }}
+      style={{ background: 'hsl(220 15% 10%)' }}
       center={[15, 0]}
       zoom={3}
       zoomControl={false}

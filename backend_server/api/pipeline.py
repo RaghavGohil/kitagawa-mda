@@ -21,7 +21,7 @@ from shared.config import IMAGES_DIR, INFERENCE_SERVER_URL
 from shared.schemas import InferenceResponse, PipelineStatus
 from backend_server.db.connection import get_db, async_session
 from backend_server.db.models import ProcessedImage
-from backend_server.services.ingestion import search_recent_images, cleanup_uncorrelated_ais
+from backend_server.services.ingestion import search_recent_images, cleanup_uncorrelated_ais, US_WATERS_WKT
 from backend_server.services.chips import generate_and_upload_chips
 from backend_server.services.correlation import run_correlation
 from shared.utils import check_resources
@@ -110,10 +110,10 @@ async def get_pipeline_status():
 
 
 @router.get("/search")
-async def search_copernicus(instrument: str = "SAR", days: int = 7):
+async def search_copernicus(instrument: str = "SAR", days: int = 7, start_date: str = None, end_date: str = None):
     """Search for available images in Copernicus."""
-    results = search_recent_images(instrument, days)
-    return {"results": results}
+    results, filter_expr = search_recent_images(instrument, days, start_date=start_date, end_date=end_date, aoi=US_WATERS_WKT)
+    return {"results": results, "count": len(results), "filter": filter_expr}
 
 
 @router.post("/run")
@@ -325,7 +325,7 @@ async def _run_pipeline_task(image_names: list[str]):
                 await broadcast_status()
                 async with async_session() as db:
                     for det in detections:
-                        if det.confidence < 0.80:
+                        if det.confidence < 0.50:
                             continue
                         await db.execute(
                             text("""
@@ -486,13 +486,13 @@ async def start_background_ingest_polling():
 
             # 2. Search for images in 2025 filling the DB with compatible data
             s_date = "2025-01-01T00:00:00.000Z"
-            # Expansion: Search entire 2025 and 2026
-            e_date = "2027-01-01T00:00:00.000Z"
+            # Extension: Search only Jan 2025
+            e_date = "2025-02-01T00:00:00.000Z"
             
             print(f"[Pipeline] Polling: Searching for images between {s_date} and {e_date}...", flush=True)
             # SAR (Sentinel-1)
             try:
-                sar_discovered = search_recent_images(instrument="SAR", start_date=s_date, end_date=e_date)
+                sar_discovered, _ = search_recent_images(instrument="SAR", start_date=s_date, end_date=e_date, aoi=US_WATERS_WKT)
                 print(f"[Pipeline] Polling: SAR search returned {len(sar_discovered)} products.", flush=True)
             except Exception as se:
                 print(f"[Pipeline] SAR search error: {se}", flush=True)
@@ -502,7 +502,7 @@ async def start_background_ingest_polling():
             
             # EO (Sentinel-2)
             try:
-                eo_discovered = search_recent_images(instrument="EO", start_date=s_date, end_date=e_date)
+                eo_discovered, _ = search_recent_images(instrument="EO", start_date=s_date, end_date=e_date, aoi=US_WATERS_WKT)
                 print(f"[Pipeline] Polling: EO search returned {len(eo_discovered)} products.", flush=True)
             except Exception as ee:
                 print(f"[Pipeline] EO search error: {ee}", flush=True)
@@ -516,16 +516,31 @@ async def start_background_ingest_polling():
             if eo_new:
                 print(f"  - New EO samples: {[p['name'] for p in eo_new[:3]]}", flush=True)
             
-            s1a_batch = [p for p in sar_new if p["name"].startswith("S1A")]
+            s1a_batch = [p for p in sar_new if p["name"].startswith("S1A") or p["name"].startswith("S1C")]
             s1b_batch = [p for p in sar_new if p["name"].startswith("S1B")]
             
-            s2a_batch = [p for p in eo_new if p["name"].startswith("S2A")]
+            s2a_batch = [p for p in eo_new if p["name"].startswith("S2A") or p["name"].startswith("S2C")]
             s2b_batch = [p for p in eo_new if p["name"].startswith("S2B")]
             
-            # Combine and sort newest-first by timestamp
-            all_new = s1a_batch + s1b_batch + s2a_batch + s2b_batch
-            all_new.sort(key=lambda p: p.get("timestamp", ""), reverse=True)
-            target_batch = [p["name"] for p in all_new]
+            # Combine and sort newest-first by timestamp for each type
+            s1_all = s1a_batch + s1b_batch
+            s2_all = s2a_batch + s2b_batch
+            s1_all.sort(key=lambda p: p.get("timestamp", ""), reverse=True)
+            s2_all.sort(key=lambda p: p.get("timestamp", ""), reverse=True)
+
+            # Take up to 5 of each. If one lacks, take more from the other up to 10 total.
+            target_amount = 5
+            max_total = 10
+            
+            s1_take = min(len(s1_all), target_amount)
+            s2_take = min(len(s2_all), target_amount)
+
+            if s1_take < target_amount:
+                s2_take = min(len(s2_all), max_total - s1_take)
+            elif s2_take < target_amount:
+                s1_take = min(len(s1_all), max_total - s2_take)
+
+            target_batch = [p["name"] for p in s1_all[:s1_take]] + [p["name"] for p in s2_all[:s2_take]]
             
             print(f"[Pipeline] Polling: Selected batch size: {len(target_batch)}", flush=True)
             if target_batch:

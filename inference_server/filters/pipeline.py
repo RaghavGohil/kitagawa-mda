@@ -159,6 +159,11 @@ class FilterPipeline:
             
             if on_land:
                 land_count += 1
+                try:
+                    with open("/data/landmask_debug.txt", "a") as f_log:
+                        f_log.write(f"{d.image_name}, {d.vessel_latitude}, {d.vessel_longitude}\n")
+                except:
+                    pass
                 continue
             kept.append(d)
 

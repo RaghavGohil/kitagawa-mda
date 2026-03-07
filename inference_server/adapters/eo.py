@@ -109,6 +109,8 @@ class EOAdapter(SensorAdapter):
             return []
 
         # No longer accumulating into a list
+        batch_tiles = []
+        batch_positions = []
 
         for row in range(0, height, self.stride):
             for col in range(0, width, self.stride):

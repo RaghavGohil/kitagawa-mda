@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Search, Filter, X } from 'lucide-react';
+import { Search, Filter, X, ChevronRight, TriangleAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
 import {
   Select,
@@ -13,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { RangeSlider } from '@/components/ui/range-slider';
 
 import { Vessel } from '@/types';
 import { vesselTypeData, anomalyTypeData } from '@/data/data';
@@ -24,10 +24,11 @@ interface SearchFilterPanelProps {
   vessels: Vessel[];
   onFilteredVessels: (vessels: Vessel[]) => void;
   onVesselSelect: (vessel: Vessel) => void;
+  isDocked?: boolean;
 }
 
 const anomalyTypeOptions = [
-  { value: 'dont-apply', label: 'Don\'t Apply' },
+  { value: 'all', label: 'All vessels' },
   ...Object.entries(anomalyTypeData).map(([key, data]) => ({
     value: key,
     label: data.label,
@@ -40,9 +41,10 @@ export const SearchFilterPanel = ({
   vessels,
   onFilteredVessels,
   onVesselSelect,
+  isDocked = false,
 }: SearchFilterPanelProps) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [anomalyTypeFilter, setAnomalyTypeFilter] = useState('dont-apply');
+  const [anomalyTypeFilter, setAnomalyTypeFilter] = useState('all');
   const [isExpanded, setIsExpanded] = useState(false);
 
   /* ===================== FILTER LOGIC ===================== */
@@ -60,7 +62,7 @@ export const SearchFilterPanel = ({
       );
     }
 
-    if (anomalyTypeFilter !== 'dont-apply') {
+    if (anomalyTypeFilter !== 'all') {
       filtered = filtered.filter(v => v.anomaly.type === anomalyTypeFilter);
     }
 
@@ -69,13 +71,13 @@ export const SearchFilterPanel = ({
 
   const resetFilters = () => {
     setSearchQuery('');
-    setAnomalyTypeFilter('dont-apply');
+    setAnomalyTypeFilter('all');
     onFilteredVessels(vessels);
   };
 
   const hasActiveFilters =
     searchQuery.trim() ||
-    anomalyTypeFilter !== 'dont-apply';
+    anomalyTypeFilter !== 'all';
 
   /* ===================== QUICK SEARCH ===================== */
 
@@ -92,62 +94,83 @@ export const SearchFilterPanel = ({
   /* ===================== RENDER ===================== */
 
   return (
-    <div className="rounded-lg border border-border/60 bg-card/95 backdrop-blur">
-      {/* Search Bar */}
-      <div className="p-2">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by name, MMSI, IMO..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="pl-9 pr-9 bg-muted/50 border-border"
-          />
-          {searchQuery && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-              onClick={() => setSearchQuery('')}
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          )}
+    <div className={cn(
+      "overflow-hidden bg-card border border-border shadow-xl w-[360px] max-w-[calc(100vw-32px)] rounded-xl",
+      isDocked && "w-full bg-transparent border-none shadow-none"
+    )}>
+
+      {/* SEARCH AREA */}
+      <div className={cn(
+        "p-[10px] space-y-[10px]",
+        !isDocked && "border-b border-border bg-muted/5"
+      )}>
+        <div className="relative group flex items-center">
+          <div className="relative flex-1">
+            <div className="flex items-center h-12 rounded-xl border border-border bg-background/50 px-3 gap-2 focus-within:ring-2 focus-within:ring-primary/20 mr-[10px]">
+              <Search
+                className={cn(
+                  "h-5 w-5 transition-colors",
+                  searchQuery ? "text-primary animate-pulse-subtle" : "text-muted-foreground"
+                )}
+              />
+
+              <Input
+                placeholder="Search vessels or MMSI..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="flex-1 !border-0 !bg-transparent !shadow-none !p-0 focus-visible:!ring-0 focus-visible:!ring-offset-0"
+              />
+
+              {searchQuery && (
+                <button
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className={cn(
+              "h-12 w-12 shrink-0 rounded-xl btn-standard border border-border/60",
+              isExpanded ? "bg-primary/10 border-primary/30 text-primary" : "text-muted-foreground hover:border-border"
+            )}
+            onClick={() => setIsExpanded(v => !v)}
+            title="Toggle Filters"
+          >
+            <Filter className="h-5 w-5" />
+          </Button>
         </div>
 
+        {/* SEARCH PREVIEW */}
         {searchResults.length > 0 && (
-          <div className="mt-2 space-y-1">
+          <div className="space-y-[10px] py-[10px]">
             {searchResults.map(vessel => {
-              const anomalyMeta = vessel.type === 'ship' ? undefined : (vessel.anomaly.type === 'anomaly' ? anomalyTypeData['anomaly'] : anomalyTypeData['unidentified']);
+              const isAnomaly = vessel.anomaly.type === 'anomaly';
+              const dotColor = isAnomaly ? 'rgb(234, 179, 8)' : 'rgb(59, 130, 246)';
 
               return (
                 <button
                   key={vessel.id}
-                  className="w-full text-left px-2 py-1.5 rounded hover:bg-accent transition-colors flex justify-between"
+                  className="w-full text-left p-[10px] rounded-xl hover:bg-muted/50 flex justify-between items-center group border border-transparent hover:border-border"
                   onClick={() => {
                     onVesselSelect(vessel);
                     setSearchQuery('');
                   }}
                 >
-                  <div>
-                    <div className="text-sm">{vessel.name}</div>
-                    <div className="text-xs text-muted-foreground font-mono">
-                      {vessel.mmsi}
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold truncate group-hover:text-primary transition-colors">{vessel.name}</div>
+                    <div className="text-[11px] text-muted-foreground font-semibold flex items-center gap-[10px] mt-[10px]">
+                      <div className="h-3 w-3 rounded-lg" style={{ backgroundColor: dotColor }} />
+                      {vessel.mmsi || 'No MMSI'}
                     </div>
                   </div>
-
-                  {vessel.type === 'unidentified' && (
-                    <Badge
-                      variant="outline"
-                      className="text-[10px]"
-                      style={{
-                        borderColor: anomalyMeta?.color ?? '#FACC15',
-                        color: anomalyMeta?.color ?? '#FACC15',
-                      }}
-                    >
-                      {anomalyMeta?.label ?? 'Unidentified'}
-                    </Badge>
-                  )}
+                  <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-primary transition-transform group-hover:translate-x-1" />
                 </button>
               );
             })}
@@ -155,38 +178,34 @@ export const SearchFilterPanel = ({
         )}
       </div>
 
-      {/* Filters Toggle */}
-      <div className="px-2 pb-2">
-        <Button
-          size="sm"
-          className="w-full justify-between border border-border/60 bg-transparent hover:bg-muted text-white"
-          onClick={() => setIsExpanded(v => !v)}
-        >
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4" />
-            <span>Filters</span>
-            {hasActiveFilters && (
-              <Badge className="text-xs border border-border/60 bg-transparent text-muted-foreground">
-                Active
-              </Badge>
-            )}
-          </div>
-        </Button>
-      </div>
+      {/* QUICK ACTIONS / STATUS */}
+      {isDocked && hasActiveFilters && !isExpanded && (
+        <div className="px-[10px] py-[10px] flex items-center justify-between bg-primary/5 border-t border-border/20">
+          <span className="text-[10px] font-bold text-primary uppercase tracking-wider">Active Filters</span>
+          <button
+            onClick={resetFilters}
+            className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors uppercase tracking-wider"
+          >
+            Clear All
+          </button>
+        </div>
+      )}
 
-      {/* Expanded Filters */}
+      {/* FILTERS PANEL */}
       {isExpanded && (
-        <div className="border-t border-border px-2 py-2 space-y-2">
-          {/* Anomaly Type / Classification */}
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Vessel Classification</label>
+        <div className={cn(
+          "p-[10px] space-y-[10px] bg-card animate-in slide-in-from-top-2 duration-300",
+          isDocked && "border-t border-border/40"
+        )}>
+          <div className="space-y-[10px]">
+            <label className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">Vessel Types</label>
             <Select value={anomalyTypeFilter} onValueChange={setAnomalyTypeFilter}>
-              <SelectTrigger className="bg-muted/50">
-                <SelectValue />
+              <SelectTrigger className="h-[42px] bg-background/50 border-border rounded-xl focus:ring-primary/20">
+                <SelectValue placeholder="All categories" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-card/95 backdrop-blur-lg border-border rounded-xl shadow-2xl">
                 {anomalyTypeOptions.map(v => (
-                  <SelectItem key={v.value} value={v.value}>
+                  <SelectItem key={v.value} value={v.value} className="py-[10px] rounded-lg focus:bg-primary/10">
                     {v.label}
                   </SelectItem>
                 ))}
@@ -194,22 +213,13 @@ export const SearchFilterPanel = ({
             </Select>
           </div>
 
-
-          {/* Actions */}
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-[10px]">
             <Button
-              size="sm"
-              className="flex-1 border border-border/60 bg-transparent hover:bg-muted text-white"
-              onClick={resetFilters}
-            >
-              Reset
-            </Button>
-            <Button
-              size="sm"
-              className="flex-1 border border-border/60 bg-transparent hover:bg-muted text-white"
+              variant="outline"
+              className="flex-1 h-[42px] btn-standard text-primary border-primary/40 bg-primary/5 hover:bg-primary/10 font-black uppercase tracking-widest text-[10px]"
               onClick={applyFilters}
             >
-              Apply
+              Apply Changes
             </Button>
           </div>
         </div>
@@ -217,4 +227,3 @@ export const SearchFilterPanel = ({
     </div>
   );
 };
-

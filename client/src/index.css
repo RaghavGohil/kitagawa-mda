@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -9,45 +9,43 @@
     /* ===============================
        CORE NEUTRAL SYSTEM
        =============================== */
-    --background: 0 0% 6%;
-    --foreground: 0 0% 92%;
+    --background: 220 15% 10%;
+    --foreground: 220 10% 95%;
 
-    --card: 0 0% 9%;
-    --card-foreground: 0 0% 92%;
+    --card: 220 15% 12%;
+    --card-foreground: 220 10% 95%;
 
-    --popover: 0 0% 10%;
-    --popover-foreground: 0 0% 92%;
+    --popover: 220 15% 15%;
+    --popover-foreground: 220 10% 95%;
 
-    /* Primary = emphasis, not color */
-    --primary: 0 0% 85%;
-    --primary-foreground: 0 0% 10%;
+    /* Standard Professional Brand */
+    --primary: 210 100% 50%;
+    --primary-foreground: 220 10% 98%;
 
-    --secondary: 0 0% 18%;
-    --secondary-foreground: 0 0% 90%;
+    --secondary: 220 15% 16%;
+    --secondary-foreground: 220 10% 90%;
 
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 60%;
+    --muted: 220 15% 16%;
+    --muted-foreground: 220 5% 65%;
 
-    --accent: 0 0% 22%;
-    --accent-foreground: 0 0% 92%;
+    --accent: 220 15% 20%;
+    --accent-foreground: 220 10% 95%;
 
-    /* Semantic alerts (subtle, not flashy) */
-    --destructive: 0 65% 45%;
-    --destructive-foreground: 0 0% 96%;
+    /* Standard Semantic colors */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
 
-    --border: 0 0% 18%;
-    --input: 0 0% 16%;
-    --ring: 0 0% 55%;
+    --border: 220 15% 20%;
+    --input: 220 15% 20%;
+    --ring: 210 100% 50%;
 
-    --radius: 0.4rem;
+    --radius: 12px;
 
-    /* ===============================
-       STATUS SEMANTICS (MUTED)
-       =============================== */
-    --status-normal: 0 0% 65%;
-    --status-warning: 38 70% 50%;
-    --status-critical: 0 65% 45%;
-    --status-info: 210 15% 65%;
+    /* Status Semantics */
+    --status-normal: 142 70% 45%;
+    --status-warning: 45 93% 47%;
+    --status-critical: 0 84% 60%;
+    --status-info: 210 100% 50%;
 
     --anomaly-low: 38 70% 50%;
     --anomaly-medium: 25 70% 45%;
@@ -66,9 +64,9 @@
     --zone-port: 0 0% 26%;
     --zone-shipping: 0 0% 30%;
 
-    /* Shadows (flat, professional) */
-    --shadow-card: 0 2px 12px hsl(0 0% 0% / 0.4);
-    --shadow-elevated: 0 6px 24px hsl(0 0% 0% / 0.6);
+    /* Shadows (flat, scientific) */
+    --shadow-card: none;
+    --shadow-elevated: none;
 
     /* Sidebar */
     --sidebar-background: 0 0% 7%;
@@ -85,70 +83,164 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "Inter", system-ui, sans-serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 24px;
+    /* 10px aligned: basically rounding up for standard feel */
   }
 
   .font-mono {
-    font-family: "JetBrains Mono", monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }
 
 @layer components {
-  /* Status badges (clean, no glow) */
-  .status-normal {
-    @apply text-[hsl(var(--status-normal))];
+
+  /* Standard Buttons */
+  .btn-standard {
+    @apply bg-transparent border border-border rounded-xl text-sm font-bold flex items-center justify-center;
+    height: 42px;
+    /* 14 * 3 = 42 */
   }
-  .status-warning {
-    @apply text-[hsl(var(--status-warning))];
+
+  .btn-standard:hover,
+  .btn-standard:active {
+    @apply bg-muted/20 border-border/80 !important;
   }
-  .status-critical {
-    @apply text-[hsl(var(--status-critical))];
+
+  /* Utility Animations */
+  .animate-slow-spin {
+    animation: spinner 3s linear infinite;
   }
-  .status-info {
-    @apply text-[hsl(var(--status-info))];
+
+  .animate-pulse-subtle {
+    animation: pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
+
+  .animate-glow {
+    animation: glow 2s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes spinner {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.95);
+  }
+}
+
+@keyframes glow {
+  from {
+    box-shadow: 0 0 5px -1px currentColor;
+    opacity: 0.8;
+  }
+
+  to {
+    box-shadow: 0 0 15px 2px currentColor;
+    opacity: 1;
+  }
+}
+
+/* Global Reset: Selective Animations */
+* {
+  transition: none;
+}
+
+.animate-spin,
+.animate-pulse,
+.animate-slow-spin,
+.animate-pulse-subtle,
+.animate-glow,
+[class*="animate-"] {
+  animation: revert !important;
+  transition: revert !important;
+}
+
+/* Input Standardization */
+input,
+select,
+textarea {
+  @apply bg-transparent border border-border rounded-xl !important;
+  height: 42px;
+  /* 14 * 3 = 42 */
+  padding: 0 10px !important;
+  /* EXACTLY 10px */
+}
+
+input:focus,
+select:focus {
+  @apply border-primary/50 ring-0 outline-none !important;
 }
 
 /* ===============================
    LEAFLET — CLEAN GIS STYLE
    =============================== */
 .leaflet-container {
-  background: hsl(0 0% 6%) !important;
+  background: hsl(220 15% 10%) !important;
   font-family: "Inter", system-ui, sans-serif;
 }
 
 .leaflet-control-zoom {
-  background: hsl(0 0% 10%) !important;
-  border: 1px solid hsl(0 0% 18%) !important;
+  background: hsl(220 15% 12%) !important;
+  border: 1px solid hsl(220 15% 20%) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+  margin: 10px !important;
+  /* EXACTLY 10px */
 }
 
 .leaflet-control-zoom a {
-  background: hsl(0 0% 10%) !important;
-  color: hsl(0 0% 85%) !important;
-  border-bottom-color: hsl(0 0% 18%) !important;
+  background: transparent !important;
+  color: hsl(220 10% 90%) !important;
+  border-bottom: 1px solid hsl(220 15% 20%) !important;
+  width: 30px !important;
+  /* 10 * 3 = 30 */
+  height: 30px !important;
+  /* 10 * 3 = 30 */
+  line-height: 30px !important;
 }
 
 .leaflet-control-zoom a:hover {
-  background: hsl(0 0% 14%) !important;
+  background: hsl(220 15% 20%) !important;
 }
 
 .leaflet-control-attribution {
   background: hsl(0 0% 8% / 0.9) !important;
   color: hsl(0 0% 55%) !important;
+  padding: 10px !important;
+  /* EXACTLY 10px */
 }
 
 .leaflet-popup-content-wrapper {
-  background: hsl(0 0% 10%) !important; /* dark background */
-  color: hsl(0 0% 92%) !important; /* light text */
+  background: hsl(0 0% 10%) !important;
+  color: hsl(0 0% 92%) !important;
   border: 1px solid hsl(0 0% 18%) !important;
-  border-radius: 8px !important; /* slightly rounded corners */
-  box-shadow: none !important; /* remove shadow */
-  padding: 2px 2px !important; /* optional: nice padding */
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  padding: 10px !important;
+  /* EXACTLY 10px */
 }
 
 .leaflet-popup-tip {
-  background: hsl(0 0% 9%) !important; /* match popup background */
-  box-shadow: none !important; /* remove tip shadow */
+  background: hsl(0 0% 9%) !important;
+  box-shadow: none !important;
 }
 
 /* ===============================
@@ -160,8 +252,9 @@
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  /* 3 * 3 = 9 */
+  height: 9px;
 }
 
 *::-webkit-scrollbar-track {
@@ -171,7 +264,8 @@
 *::-webkit-scrollbar-thumb {
   background-color: hsl(0 0% 28%);
   border-radius: 6px;
-  border: 2px solid hsl(0 0% 8%);
+  /* 2 * 3 = 6 */
+  border: 4px solid hsl(0 0% 8%);
 }
 
 *::-webkit-scrollbar-thumb:hover {

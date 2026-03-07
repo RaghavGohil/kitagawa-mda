@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { cn } from '@/lib/utils';
 import Logo from '/logo.svg';
 import { Button } from '@/components/ui/button';
 import { X, Loader2, Clock, AlertCircle, XCircle } from 'lucide-react';
@@ -74,32 +75,71 @@ export const Header = () => {
   return (
     <>
       {/* Navbar */}
-      <header className="h-14 border-b border-border/60 bg-card/90 backdrop-blur-sm px-2 flex items-center justify-between relative z-10">
-        <div className="flex items-center gap-2">
-          <div>
-            <h1 className="font-semibold text-lg tracking-tight">
-              <img src={Logo} className="w-40" alt="Logo" />
-            </h1>
-            <p className="text-[10px] text-muted-foreground -mt-0.5">
-              Maritime Domain Awareness System
-            </p>
+      <header className="h-[66px] border-b border-border bg-card/95 backdrop-blur-md flex items-center justify-between relative z-10 shadow-sm">
+        {/* LEFT: LOGO & BRANDING */}
+        <div className="flex items-center gap-[10px] min-w-[300px]">
+          <div className="flex items-center active:opacity-80 transition-opacity cursor-pointer shrink-0">
+            <img src={Logo} className="h-7 w-auto" alt="Logo" />
+          </div>
+          <div className="h-6 w-px bg-border" />
+          <div className="flex flex-col justify-center">
+            <span className="text-sm font-bold text-muted-foreground opacity-40">Maritime Domain Awareness</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex flex-col items-end mr-2">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest leading-none">Status</span>
-            <span className={`text-xs font-semibold ${statusInfo.color}`}>
-              {statusInfo.label}
+        {/* RIGHT: STATUS & QUEUE */}
+        <div className="flex items-center justify-end gap-[10px]">
+
+          <div className="hidden md:flex flex-col items-end leading-tight gap-y-[2px]">
+
+            <span className="text-[11px] uppercase font-bold text-muted-foreground/40 tracking-wider">
+              System Status
             </span>
+
+            <div className="flex items-center gap-[10px]">
+              <div
+                className={cn(
+                  "w-2.5 h-2.5 rounded-full",
+                  isRunning
+                    ? "bg-green-500 animate-glow"
+                    : isFailed
+                      ? "bg-red-500"
+                      : "bg-muted-foreground/20"
+                )}
+              />
+
+              <span
+                className={cn(
+                  "text-[11px] font-bold uppercase tracking-wider",
+                  isRunning
+                    ? "text-green-500"
+                    : isFailed
+                      ? "text-red-500"
+                      : "text-muted-foreground/40"
+                )}
+              >
+                {statusInfo.label}
+              </span>
+            </div>
+
           </div>
 
           <Button
-            className={`rounded-lg border bg-transparent hover:bg-muted text-white flex gap-2 h-9 ${isFailed ? 'border-red-500/50 animate-pulse' : ''}`}
+            variant={isFailed ? "destructive" : "outline"}
+            size="sm"
+            className={cn(
+              "mr-[10px] rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 border border-border",
+              isRunning && "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10"
+            )}
             onClick={() => setIsQueueOpen(true)}
           >
-            {isRunning && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {isFailed && <XCircle className="w-3.5 h-3.5 text-red-400" />}
+            {isRunning ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : isFailed ? (
+              <XCircle className="w-3.5 h-3.5" />
+            ) : (
+              <Clock className="w-3.5 h-3.5" />
+            )}
             Image Queue ({pendingCount})
           </Button>
         </div>
@@ -107,17 +147,18 @@ export const Header = () => {
 
       {/* QUEUE MODAL */}
       {isQueueOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-[10px] animate-in fade-in duration-300">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
             {/* Modal Header */}
-            <div className="flex justify-between items-center p-4 border-b border-border shrink-0 bg-muted/20">
-              <div>
-                <h3 className="text-lg font-bold">Live Processing Queue</h3>
-                <p className="text-xs text-muted-foreground">Real-time status of automatic satellite image analysis</p>
+            <div className="flex justify-between items-center px-[10px] py-[10px] border-b border-border bg-muted/5 shrink-0">
+              <div className="space-y-[10px]">
+                <h3 className="text-lg font-bold">Image Queue</h3>
+                <p className="text-[11px] text-muted-foreground font-medium">Monitoring satellite pipeline and AIS correlation</p>
               </div>
               <Button
                 variant="ghost"
                 size="icon"
+                className="h-9 w-9 rounded-xl hover:bg-muted border border-transparent hover:border-border"
                 onClick={() => setIsQueueOpen(false)}
               >
                 <X className="h-5 w-5" />
@@ -125,70 +166,48 @@ export const Header = () => {
             </div>
 
             {/* Queue List */}
-            <div className="p-6 space-y-8 overflow-y-auto">
+            <div className="p-[10px] space-y-[10px] overflow-y-auto custom-scrollbar">
 
-              {/* PIPELINE ERROR / FAILURE MESSAGE */}
+              {/* ERROR MESSAGE */}
               {isFailed && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] uppercase font-black tracking-widest text-red-400 flex items-center gap-2">
-                    <XCircle className="w-3.5 h-3.5" /> Pipeline Error
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <h4 className="text-[11px] font-bold text-red-500 uppercase tracking-widest flex items-center gap-[9px]">
+                    <AlertCircle className="w-4 h-4" /> System Fault Detected
                   </h4>
-                  <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-xl space-y-2">
-                    <p className="text-sm text-red-300 font-medium">
+                  <div className="bg-red-500/5 border border-red-500/20 p-6 rounded-xl">
+                    <p className="text-xs text-red-600 dark:text-red-400 font-bold leading-relaxed">
                       {status?.message || 'An unknown error occurred during processing.'}
                     </p>
-                    {status?.current_image && (
-                      <p className="text-xs text-muted-foreground">
-                        Failed while processing: <span className="font-mono font-bold text-red-400/80">{status.current_image}</span>
-                      </p>
-                    )}
-                    {status?.started_at && status?.completed_at && (
-                      <p className="text-[10px] text-muted-foreground/60">
-                        Duration: {(() => {
-                          const start = new Date(status.started_at).getTime();
-                          const end = new Date(status.completed_at).getTime();
-                          const secs = Math.round((end - start) / 1000);
-                          return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
-                        })()}
-                      </p>
-                    )}
-                    {/* Failed images list */}
-                    {status?.failed_images && status.failed_images.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-red-500/20">
-                        <p className="text-[10px] uppercase font-bold text-red-400/70 mb-1">Failed Images</p>
-                        {status.failed_images.map((img) => (
-                          <p key={img} className="text-xs font-mono text-muted-foreground/70 break-all">{img}</p>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
 
               {/* CURRENTLY PROCESSING */}
               {status?.current_image && isRunning && (
-                <div className="space-y-4">
-                  <h4 className="text-[10px] uppercase font-black tracking-widest text-primary flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Active Analysis
+                <div className="space-y-6 animate-in fade-in duration-300">
+                  <h4 className="text-[11px] font-bold text-primary uppercase tracking-widest flex items-center gap-[9px]">
+                    <Clock className="w-4 h-4" /> Active Process
                   </h4>
-                  <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl flex flex-col gap-3">
-                    <div className="flex justify-between items-start">
-                      <span className="text-sm font-bold pr-4 break-all">{status.current_image}</span>
-                      <Badge variant="outline" className="border-primary text-primary animate-pulse text-[10px] font-bold">Processing</Badge>
+                  <div className="bg-muted/10 border border-border p-6 rounded-2xl space-y-6 shadow-inner">
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase opacity-50 tracking-wider">Image Name</span>
+                        <p className="text-xs font-mono text-foreground mt-[6px] break-all font-bold">{status.current_image}</p>
+                      </div>
+                      <Badge className="bg-transparent border border-primary/40 text-primary shrink-0 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest h-[24px]">
+                        Processing
+                      </Badge>
                     </div>
-                    <div className="space-y-4">
 
-                      {/* Single active stage progress bar */}
-                      {status.current_stage && status.current_stage !== "Finished" && (
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between text-[10px] uppercase tracking-wider font-extrabold text-muted-foreground/70">
-                            <span>{STAGE_LABELS[status.current_stage] || status.current_stage}</span>
-                            <span>{Math.round(displayProgress)}%</span>
-                          </div>
-                          <Progress value={displayProgress} className="h-1 bg-primary/10" />
+                    {status.current_stage && status.current_stage !== "Finished" && (
+                      <div className="space-y-3 pt-2">
+                        <div className="flex justify-between items-end">
+                          <span className="text-sm font-bold text-foreground">{STAGE_LABELS[status.current_stage] || status.current_stage}</span>
+                          <span className="text-lg font-black text-primary font-mono">{Math.round(displayProgress)}%</span>
                         </div>
-                      )}
-                    </div>
+                        <Progress value={displayProgress} className="h-3 rounded-lg bg-primary/10" />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -196,15 +215,19 @@ export const Header = () => {
 
               {/* QUEUED IMAGES */}
               {status?.queued_images && status.queued_images.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] uppercase font-black tracking-widest text-muted-foreground flex items-center gap-2 px-1">
-                    <Clock className="w-3 h-3" /> Scheduled in Queue
+                <div className="space-y-4">
+                  <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                    <Clock className="w-4 h-4" /> Pipeline Backlog ({status.queued_images.length})
                   </h4>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {status.queued_images.map((img) => (
-                      <div key={img} className="bg-muted/30 border border-border/50 p-4 rounded-xl flex justify-between items-center group hover:bg-muted/50 transition-colors">
-                        <span className="text-xs font-bold text-muted-foreground/80 pr-4 break-all">{img}</span>
-                        <Badge variant="outline" className="text-[9px] bg-background font-bold tracking-tight shrink-0">Waiting</Badge>
+                      <div key={img} className="bg-muted/5 border border-border p-4 rounded-xl flex justify-between items-center group hover:bg-muted/10 hover:border-primary/20 transition-all cursor-default overflow-hidden">
+                        <div className="min-w-0 pr-4">
+                          <p className="text-xs font-mono text-muted-foreground mt-1.5 truncate font-bold">{img}</p>
+                        </div>
+                        <Badge variant="outline" className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest opacity-40 shrink-0 border-border rounded-lg">
+                          Pending
+                        </Badge>
                       </div>
                     ))}
                   </div>
@@ -212,13 +235,13 @@ export const Header = () => {
               )}
 
               {(!status || status.status === 'idle') && pendingCount === 0 && (
-                <div className="text-center py-16 space-y-4 rounded-2xl bg-muted/10 border border-dashed">
-                  <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center mx-auto ring-8 ring-muted/5">
-                    <Clock className="w-8 h-8 text-muted-foreground/30" />
+                <div className="py-[10px] flex flex-col items-center justify-center text-center space-y-[10px] bg-muted/5 border border-dashed border-border rounded-2xl">
+                  <div className="h-16 w-16 rounded-full bg-muted/10 flex items-center justify-center">
+                    <Clock className="w-8 h-8 text-muted-foreground/20" />
                   </div>
-                  <div className="space-y-1 px-8">
-                    <p className="text-sm font-bold text-muted-foreground">No active tasks</p>
-                    <p className="text-xs text-muted-foreground/50 leading-relaxed">The system is polling Copernicus for new imagery automatically.</p>
+                  <div className="space-y-[10px] px-[10px]">
+                    <p className="text-sm font-bold text-foreground">Operational Efficiency Nominal</p>
+                    <p className="text-xs text-muted-foreground/60 leading-relaxed font-medium">Monitoring data streams. No active acquisition tasks are currently queued for processing.</p>
                   </div>
                 </div>
               )}

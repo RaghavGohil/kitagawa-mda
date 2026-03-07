@@ -53,7 +53,7 @@ const Index = () => {
   }, [selectedVessel, vesselDetail]);
 
   /* ================= PLAYBACK TIME ================= */
-  const [playbackTime, setPlaybackTime] = useState<Date>(() => new Date()); // Default to now, showing all data
+  const [playbackTime, setPlaybackTime] = useState<Date>(() => new Date("2025-01-01T00:00:00Z")); // Default to Jan 2025
   const [jumpToTime, setJumpToTime] = useState<Date | null>(null);
   const [timeRangeMs, setTimeRangeMs] = useState<number>(2 * 24 * 60 * 60 * 1000); // Default 2 days
 
@@ -195,10 +195,10 @@ const Index = () => {
   /* ================= RENDER ================= */
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-background">
+    <div className="h-screen w-screen overflow-hidden bg-background flex flex-col font-sans">
       <Header />
 
-      <div className="relative h-[calc(100vh-56px)] w-full">
+      <main className="relative flex-1 w-full overflow-hidden">
         {/* ================= MAP ================= */}
         <div className="absolute inset-0 z-0">
           <MapView
@@ -215,52 +215,68 @@ const Index = () => {
             }}
           />
           {vesselsLoading && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-background/80 backdrop-blur-sm px-3 py-1.5 rounded-full border shadow-lg flex items-center gap-2">
+            <div className="absolute top-[10px] left-1/2 -translate-x-1/2 z-[1000] bg-card/90 backdrop-blur-md px-[14px] py-[10px] rounded-xl border border-primary/30 flex items-center gap-[10px] shadow-2xl animate-in slide-in-from-top-2 duration-300">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-xs font-medium">Updating map data...</span>
+              <span className="text-[10px] uppercase font-black tracking-[0.2em] text-primary animate-pulse-subtle">Updating Intelligence</span>
             </div>
           )}
         </div>
 
-        {/* ================= LEFT DRAWER ================= */}
-        <LeftDrawer
-          open={drawerOpen}
-          width="25%"
-          collapsedWidth={0}
-          onToggle={() => setDrawerOpen((o) => !o)}
-        >
-          {enrichedVessel ? (
-            <VesselInfoPanel vessel={enrichedVessel} isLoading={isDetailLoading} />
-          ) : (
-            <div className="flex flex-col space-y-2">
-              <Alerts alerts={alerts} isLoading={alertsLoading} onAlertClick={handleAlertClick} alertLimit={alertLimit} onAlertLimitChange={setAlertLimit} />
-              <LayerControl
-                visibleAnomalyTypes={visibleAnomalyTypes}
-                visibleZoneTypes={visibleZoneTypes}
-                showTracks={showTracks}
-                onAnomalyTypesToggle={handleAnomalyTypesToggle}
-                onZoneTypesToggle={handleZoneTypesToggle}
-                onShowTracksChange={setShowTracks}
-              />
-            </div>
-          )}
-        </LeftDrawer>
-
-        {/* ================= SEARCH ================= */}
-        <div className="absolute top-2 right-2 z-20 pointer-events-auto">
+        {/* ================= SEARCH HUB (FLOATING) ================= */}
+        <div className="absolute top-[10px] right-[10px] z-20">
           <SearchFilterPanel
             vessels={vessels}
             onFilteredVessels={setFilteredVessels}
             onVesselSelect={handleVesselSelect}
+            isDocked={false}
           />
         </div>
 
-        {/* ================= TIME ================= */}
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 w-full max-w-xl px-4 pointer-events-auto">
-          <Playback onTimeChange={setPlaybackTime} onTimeRangeChange={handleTimeRangeChange} jumpToTime={jumpToTime} />
+        {/* ================= COMMAND CENTER (LEFT DRAWER) ================= */}
+        <LeftDrawer
+          open={drawerOpen}
+          width={typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : '380px'}
+          collapsedWidth={0}
+          onToggle={() => setDrawerOpen((o) => !o)}
+        >
+          <div className="flex flex-col h-full">
+            {/* DYNAMIC CONTENT AREA */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {enrichedVessel ? (
+                <VesselInfoPanel vessel={enrichedVessel} isLoading={isDetailLoading} />
+              ) : (
+                <div className="p-[10px] space-y-[10px]">
+                  <Alerts
+                    alerts={alerts}
+                    isLoading={alertsLoading}
+                    onAlertClick={handleAlertClick}
+                    alertLimit={alertLimit}
+                    onAlertLimitChange={setAlertLimit}
+                  />
+                  <LayerControl
+                    visibleAnomalyTypes={visibleAnomalyTypes}
+                    visibleZoneTypes={visibleZoneTypes}
+                    showTracks={showTracks}
+                    onAnomalyTypesToggle={handleAnomalyTypesToggle}
+                    onZoneTypesToggle={handleZoneTypesToggle}
+                    onShowTracksChange={setShowTracks}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </LeftDrawer>
+
+        {/* ================= TIME CONTROLS ================= */}
+        <div className="absolute bottom-[10px] left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-[10px] pointer-events-auto">
+          <Playback
+            onTimeChange={setPlaybackTime}
+            onTimeRangeChange={handleTimeRangeChange}
+            jumpToTime={jumpToTime}
+          />
         </div>
 
-      </div>
+      </main>
     </div>
   );
 };

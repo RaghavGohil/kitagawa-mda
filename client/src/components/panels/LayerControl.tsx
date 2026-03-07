@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Layers, TriangleAlert, MapPin, Route, ChevronDown, ChevronUp } from 'lucide-react';
+import { Layers, TriangleAlert, MapPin, Route, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
 import { AnomalyType, ZoneType } from '@/types';
 import {
   anomalyTypeData,
@@ -24,108 +25,89 @@ export const LayerControl = ({
   onZoneTypesToggle,
   onShowTracksChange,
 }: LayerControlProps) => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [classificationExpanded, setClassificationExpanded] = useState(true);
-  const [zonesExpanded, setZonesExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   return (
-    <div className="rounded-lg">
-      {/* Header */}
+    <div className="rounded-lg border border-border bg-card overflow-hidden shadow-md animate-in fade-in duration-300">
+      {/* Main Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium border-b hover:text-primary"
+        className={cn(
+          "flex w-full items-center justify-between px-[10px] py-[10px] bg-muted/5 border-border hover:bg-muted/10 transition-none group",
+          isExpanded ? "border-b" : "border-none"
+        )}
       >
-        <div className="flex items-center gap-2">
-          <Layers className="h-4 w-4" />
-          Layers
+        <div className="flex items-center gap-[10px]">
+          <Layers className="h-[21px] w-[21px] text-primary" />
+          <span className="text-sm font-bold tracking-tight">Map Layers</span>
         </div>
-        {isExpanded ? <ChevronUp /> : <ChevronDown />}
+        <div className="flex items-center">
+          <ChevronRight className={cn("h-[15px] w-[15px] text-muted-foreground/50 transition-transform duration-200", isExpanded ? "rotate-90" : "rotate-0")} />
+        </div>
       </button>
 
       {isExpanded && (
-        <div className="divide-y">
-          {/* ===== Vessel Classification (single consolidated section) ===== */}
-          <div className="px-3 py-3 space-y-2">
-            <button
-              onClick={() => setClassificationExpanded(!classificationExpanded)}
-              className="flex w-full justify-between text-xs uppercase text-muted-foreground"
-            >
-              <div className="flex items-center gap-2">
-                <TriangleAlert className="h-3.5 w-3.5" />
-                Vessel Classification
-              </div>
-              {classificationExpanded ? <ChevronUp /> : <ChevronDown />}
-            </button>
+        <div className="divide-y divide-border">
+          {/* ===== Vessel Types ===== */}
+          <div className="p-[10px] space-y-[10px]">
+            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Vessel Types</h4>
 
-            {classificationExpanded &&
-              Object.entries(anomalyTypeData).map(([id, meta]) => (
-                <label
-                  key={id}
-                  className="flex items-center justify-between text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 rounded-full"
+            <div className="space-y-[10px]">
+              {Object.entries(anomalyTypeData).map(([id, meta]) => (
+                <label key={id} className="flex items-center justify-between group cursor-pointer">
+                  <div className="flex items-center gap-[10px]">
+                    <div
+                      className="h-3 w-3 rounded-lg shrink-0"
                       style={{ backgroundColor: meta.color }}
                     />
-                    {meta.label}
+                    <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-none">{meta.label}</span>
                   </div>
                   <Switch
                     checked={visibleAnomalyTypes.has(id as AnomalyType)}
                     onCheckedChange={() => onAnomalyTypesToggle(id as AnomalyType)}
-                    className="scale-75"
                   />
                 </label>
               ))}
+            </div>
           </div>
 
-          {/* ===== Zones ===== */}
-          <div className="px-3 py-3 space-y-2">
-            <button
-              onClick={() => setZonesExpanded(!zonesExpanded)}
-              className="flex w-full justify-between text-xs uppercase text-muted-foreground"
-            >
-              <div className="flex items-center gap-2">
-                <MapPin className="h-3.5 w-3.5" />
-                Zones
-              </div>
-              {zonesExpanded ? <ChevronUp /> : <ChevronDown />}
-            </button>
+          {/* ===== Geographic Context ===== */}
+          <div className="p-[10px] space-y-[10px] bg-muted/5">
+            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Map Overlay</h4>
 
-            {zonesExpanded &&
-              Object.entries(zoneTypeData)
+            <div className="space-y-[10px]">
+              {Object.entries(zoneTypeData)
                 .filter(([id]) => id === 'eez' || id === 'shipping_lane')
                 .map(([id, meta]) => (
-                  <label key={id} className="flex justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-2 w-2 rounded-full"
+                  <label key={id} className="flex justify-between items-center group cursor-pointer">
+                    <div className="flex items-center gap-[10px]">
+                      <div
+                        className="h-3 w-3 rounded-lg shrink-0 opacity-50"
                         style={{ backgroundColor: meta.color }}
                       />
-                      {meta.label}
+                      <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-none">{meta.label}</span>
                     </div>
                     <Switch
                       checked={visibleZoneTypes.has(id as ZoneType)}
                       onCheckedChange={() => onZoneTypesToggle(id as ZoneType)}
-                      className="scale-75"
                     />
                   </label>
                 ))}
-          </div>
 
-          {/* ===== Tracks ===== */}
-          <div className="px-3 py-3">
-            <label className="flex justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <Route className="h-3.5 w-3.5" />
-                Show Tracks
+              {/* Tracks */}
+              <div className="pt-[10px] border-t border-border">
+                <label className="flex justify-between items-center group cursor-pointer">
+                  <div className="flex items-center gap-[10px]">
+                    <Route className="h-[15px] w-[15px] text-muted-foreground" />
+                    <span className="text-sm font-bold text-muted-foreground group-hover:text-foreground transition-none">Vessel Tracks</span>
+                  </div>
+                  <Switch
+                    checked={showTracks}
+                    onCheckedChange={onShowTracksChange}
+                  />
+                </label>
               </div>
-              <Switch
-                checked={showTracks}
-                onCheckedChange={onShowTracksChange}
-                className="scale-75"
-              />
-            </label>
+            </div>
           </div>
         </div>
       )}

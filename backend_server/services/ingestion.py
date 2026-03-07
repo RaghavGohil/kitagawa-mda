@@ -29,6 +29,13 @@ from shared.config import (
     MASK_DIR,
 )
 
+# ===================================================================
+# Constants & AOIs
+# ===================================================================
+# US East Coast Offshore (roughly 24N-45N, prioritizing water and avoiding inland)
+# Original: US_WATERS_WKT = "POLYGON((-82 24, -65 24, -65 45, -82 45, -82 24))"
+US_WATERS_WKT = "POLYGON((-76.0 32.0, -70.0 32.0, -70.0 40.0, -76.0 40.0, -76.0 32.0))"
+
 
 # ===================================================================
 # Image download (Copernicus Dataspace)
@@ -183,13 +190,13 @@ def search_recent_images(instrument: str = "SAR", days: int = 7, start_date: str
 
     # Date filtering
     if start_date and end_date:
-        date_filter = f"ContentDate/Start gt {start_date} and ContentDate/Start lt {end_date}"
+        date_filter = f"ContentDate/Start gt '{start_date}' and ContentDate/Start lt '{end_date}'"
     elif start_date:
-        date_filter = f"ContentDate/Start gt {start_date}"
+        date_filter = f"ContentDate/Start gt '{start_date}'"
     else:
-        # Synced to Jan 2, 2025 to match available US AIS data for testing
-        date_str = "2025-01-02T00:00:00.000Z"
-        date_filter = f"ContentDate/Start gt {date_str}"
+        # Synced to Jan 1, 2025 to match available US AIS data for testing
+        date_str = "2025-01-01T00:00:00.000Z"
+        date_filter = f"ContentDate/Start gt '{date_str}'"
     
     print(f"[Ingestion] Searching {collection} ({instrument}) with filter: {date_filter}")
     
@@ -233,10 +240,10 @@ def search_recent_images(instrument: str = "SAR", days: int = 7, start_date: str
                 "timestamp": res["ContentDate"]["Start"],
                 "size_gb": round(res["ContentLength"] / (1024**3), 2) if res.get("ContentLength") else 0,
             })
-        return products
+        return products, filter_expr
     except Exception as e:
         print(f"[Ingestion] Search failed for {collection}: {e}")
-        return []
+        return [], ""
 
 
 # ===================================================================
@@ -425,10 +432,15 @@ async def _insert_ais_csv(
             )
             chunk = chunk.dropna(subset=["base_date_time", "latitude", "longitude", "mmsi"])
             
-            # SPATIAL FILTER: Limit to roughly Southern California to avoid disk full errors
+            # SPATIAL FILTER: Default to US East Coast, allow override via env vars
+            min_lon = float(os.getenv("AIS_MIN_LON", "-82.0"))
+            max_lon = float(os.getenv("AIS_MAX_LON", "-65.0"))
+            min_lat = float(os.getenv("AIS_MIN_LAT", "24.0"))
+            max_lat = float(os.getenv("AIS_MAX_LAT", "45.0"))
+            
             chunk = chunk[
-                (chunk["longitude"] >= -121.0) & (chunk["longitude"] <= -115.0) &
-                (chunk["latitude"] >= 31.0) & (chunk["latitude"] <= 37.0)
+                (chunk["longitude"] >= min_lon) & (chunk["longitude"] <= max_lon) &
+                (chunk["latitude"] >= min_lat) & (chunk["latitude"] <= max_lat)
             ]
             
             if chunk.empty:

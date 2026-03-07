@@ -1,5 +1,7 @@
 import { motion } from 'framer-motion';
 import { ReactNode } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface LeftDrawerProps {
   open: boolean;
@@ -28,45 +30,47 @@ export const LeftDrawer = ({
         className="
           border-r border-border/60
           absolute top-0 left-0 z-30 h-full
-          bg-card/95 backdrop-blur
+          bg-card/95 backdrop-blur-md
           overflow-hidden
         "
       >
         {/* CONTENT (hidden when collapsed) */}
         <div
-          className={`
-            h-full transition-opacity duration-200
-            ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}
-          `}
+          className={cn(
+            "h-full transition-opacity duration-300",
+            open ? "opacity-100" : "opacity-0 pointer-events-none"
+          )}
         >
-          <div className="h-full overflow-y-auto px-2 py-2 space-y-4">
+          <div className="h-full overflow-y-auto">
             {children}
           </div>
         </div>
       </motion.aside>
 
-      {/* ================= TOGGLE (TRULY OUTSIDE) ================= */}
+      {/* ================= TOGGLE BUTTON ================= */}
       <motion.button
         initial={false}
         animate={{
           left: open
-            ? `calc(${width} + 7px)`     // fully outside drawer
-            : `${collapsedWidth + 7}px`
+            ? `calc(${width} + 10px)`
+            : `${collapsedWidth + 10}px`,
+          top: "10px"
         }}
         transition={{ type: 'spring', stiffness: 260, damping: 30 }}
         onClick={onToggle}
         className="
-          absolute mt-1.5 z-40
-          h-10 w-10 rounded-md
+          absolute z-40
+          h-[42px] w-[42px] rounded-xl
           bg-card hover:bg-muted
-          border border-border/60
+          border border-border
           flex items-center justify-center
-          text-xs font-medium
+          text-muted-foreground hover:text-foreground
+          shadow-lg
           pointer-events-auto
         "
-        aria-label="Toggle left drawer"
+        aria-label="Toggle Navigation"
       >
-        {open ? '◀' : '▶'}
+        {open ? <ChevronLeft className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
       </motion.button>
     </>
   );

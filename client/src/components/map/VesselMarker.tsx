@@ -25,7 +25,7 @@ export const VesselMarker = ({
   timeRangeMs = 2 * 24 * 60 * 60 * 1000, // Default 2 days
 }: VesselMarkerProps) => {
   // Fixed pixel size for marker
-  const size = 32;
+  const size = 33;
 
   /* ===================== TIME-BASED OPACITY ===================== */
 
@@ -107,7 +107,7 @@ export const VesselMarker = ({
           "
         >
           <circle
-            cx="50" cy="50" r="${isSelected ? 32 : 24}"
+            cx="50" cy="50" r="${isSelected ? 33 : 24}"
             fill="${color}"
             fill-opacity="${(isSelected ? 0.95 : 0.7) * timeOpacity}"
             stroke="${strokeColor}"
@@ -129,13 +129,16 @@ export const VesselMarker = ({
           top: 100%;
           left: 50%;
           transform: translateX(-50%);
-          font-size: 10px;
-          font-weight: bold;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
           color: white;
-          text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+          text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);
           pointer-events: none;
           white-space: nowrap;
-          margin-top: 4px;
+          margin-top: 10px;
           transition: opacity 0.2s ease-in-out;
           color: ${color};
         ">

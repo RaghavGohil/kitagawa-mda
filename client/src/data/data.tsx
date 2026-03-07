@@ -15,26 +15,26 @@ export const vesselTypeData: Record<
   VesselType,
   { label: string; color: string }
 > = {
-  ship: { label: "Identified Vessel", color: "#3B82F6" },
-  unidentified: { label: "Unidentified", color: "#94a3b8" },
+  ship: { label: "Registry Matched", color: "#60a5fa" }, // Cyber Blue
+  unidentified: { label: "No AIS Match", color: "#94a3b8" }, // Muted Slate
 };
 
 export const anomalyTypeData: Record<
   AnomalyType,
   { label: string; color: string }
 > = {
-  identified: { label: "Identified", color: "#3B82F6" },
-  no_anomaly: { label: "No Anomaly", color: "#22C55E" },
-  anomaly: { label: "Anomaly", color: "#EF4444" },
-  unidentified: { label: "Unidentified", color: "#94a3b8" },
+  identified: { label: "Vessel Matched", color: "#60a5fa" }, // Cyber Blue
+  no_anomaly: { label: "Status Normal", color: "#4ade80" }, // Mint Green (muted)
+  anomaly: { label: "Target Anomaly", color: "#fb923c" }, // Tactical Orange/Amber
+  unidentified: { label: "Unidentified", color: "#94a3b8" }, // Muted Slate
 };
 
 export const zoneTypeData: Record<ZoneType, { label: string; color: string }> =
 {
-  eez: { label: "EEZ Boundaries", color: "#3B82F6" },
-  restricted: { label: "Restricted Zones", color: "#EF4444" },
-  port: { label: "Port Zones", color: "#22C55E" },
-  shipping_lane: { label: "Shipping Lanes", color: "#FB923C" },
+  eez: { label: "EEZ Boundary", color: "#60a5fa" },
+  restricted: { label: "Restricted Ops", color: "#f87171" }, // Tactical Red
+  port: { label: "Port Zone", color: "#4ade80" },
+  shipping_lane: { label: "Shipping Corridor", color: "#cbd5e1" }, // Steel/Light Slate
 };
 
 // ===== Helpers =====
