@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Header } from "@/components/layout/Header";
+import { Explorer } from "@/components/layout/Explorer";
 import { Alerts } from "@/components/panels/Alerts";
 import { LayerControl } from "@/components/panels/LayerControl";
 import { SearchFilterPanel } from "@/components/panels/SearchFilterPanel";
@@ -120,7 +121,7 @@ export default function DashboardPage() {
     : null;
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-background flex flex-col">
+    <div className="h-[100dvh] w-full overflow-hidden bg-background flex flex-col">
       <Header />
 
       <main className="relative flex-1 w-full overflow-hidden flex flex-row">
@@ -146,57 +147,43 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* SIDEBAR TAB TOGGLE (Visible only when sidebar is closed) */}
-          {!sidebarOpen && (
-            <div className="absolute top-0 left-0 z-50">
-              <Button
-                variant="outline"
-                className="h-20 w-8 rounded-none rounded-br-md border-t-0 border-l-0 bg-background hover:bg-accent flex items-center justify-center transition-all duration-200 group"
-                onClick={() => setSidebarOpen(true)}
-              >
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:scale-110 transition-transform" />
-              </Button>
-            </div>
-          )}
-
-          {/* =================== SIDEBAR (OVERLAY) =================== */}
-          {sidebarOpen && (
-            <aside className={cn(
-              "absolute top-0 left-0 z-50 h-full bg-background border-r border-border overflow-y-auto shadow-2xl transition-all duration-300",
-              isMobile ? "w-full" : "w-[340px]",
-            )}>
-              <div className="flex flex-col h-full">
-                {/* Sidebar header */}
-                <div className="flex items-center justify-between px-5 h-20 border-b border-border shrink-0">
-                  <div className="flex flex-col">
-                    <h2 className="text-sm font-bold uppercase tracking-widest text-foreground">Explorer</h2>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 -mr-1" onClick={() => setSidebarOpen(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
+          {/* =================== SIDEBAR (EXPLORER) =================== */}
+          <Explorer
+            open={sidebarOpen}
+            onToggle={() => setSidebarOpen(prev => !prev)}
+            width={isMobile ? "100%" : "340px"}
+          >
+            <div className="flex flex-col h-full bg-background border-r border-border shadow-2xl overflow-hidden">
+              {/* Sidebar header */}
+              <div className="flex items-center justify-between px-5 h-20 border-b border-border shrink-0">
+                <div className="flex flex-col">
+                  <h2 className="text-sm font-bold uppercase tracking-widest text-foreground">Explorer</h2>
                 </div>
-
-                {/* Sidebar content */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  <SearchFilterPanel
-                    vessels={allVessels}
-                    onFilteredVessels={setFilteredVessels}
-                    onVesselSelect={handleVesselSelect}
-                    isDocked
-                  />
-                  <Alerts alerts={alerts} isLoading={isLoadingAlerts} onAlertClick={handleAlertClick} />
-                  <LayerControl
-                    visibleAnomalyTypes={visibleAnomalyTypes}
-                    visibleZoneTypes={visibleZoneTypes}
-                    showTracks={showTracks}
-                    onAnomalyTypesToggle={toggleAnomalyType}
-                    onZoneTypesToggle={toggleZoneType}
-                    onShowTracksChange={setShowTracks}
-                  />
-                </div>
+                <Button variant="ghost" size="icon" className="h-8 w-8 -mr-1" onClick={() => setSidebarOpen(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-            </aside>
-          )}
+
+              {/* Sidebar content */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <SearchFilterPanel
+                  vessels={allVessels}
+                  onFilteredVessels={setFilteredVessels}
+                  onVesselSelect={handleVesselSelect}
+                  isDocked
+                />
+                <Alerts alerts={alerts} isLoading={isLoadingAlerts} onAlertClick={handleAlertClick} />
+                <LayerControl
+                  visibleAnomalyTypes={visibleAnomalyTypes}
+                  visibleZoneTypes={visibleZoneTypes}
+                  showTracks={showTracks}
+                  onAnomalyTypesToggle={toggleAnomalyType}
+                  onZoneTypesToggle={toggleZoneType}
+                  onShowTracksChange={setShowTracks}
+                />
+              </div>
+            </div>
+          </Explorer>
 
           {/* =================== VESSEL INFO =================== */}
           {selectedVessel && (
