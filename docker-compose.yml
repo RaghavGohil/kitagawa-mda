@@ -68,6 +68,7 @@ services:
       - INFERENCE_SERVER_URL=http://inference-server:8001
       - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
       - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
+      - AISSTREAM_API_KEY=${AISSTREAM_API_KEY:-}
       - PYTHONUNBUFFERED=1
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
@@ -116,19 +117,21 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------
-  # Client — Frontend (React + Leaflet)
+  # Client — Frontend (Next.js + Leaflet)
   # -------------------------------------------------------------------
   client:
     build:
       context: ./client
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     container_name: kitagawa-client
     ports:
-      - "3000:80"
+      - "3000:3000"
     depends_on:
       backend-server:
         condition: service_healthy
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     restart: unless-stopped
 
 volumes:

@@ -7,9 +7,9 @@ export interface VesselPosition {
     lat: number;
     lng: number;
     timestamp: Date;
-    speed: number; // knots
-    heading: number; // degrees
-    course: number; // degrees
+    speed: number;
+    heading: number;
+    course: number;
 }
 
 export interface Vessel {

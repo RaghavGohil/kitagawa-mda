@@ -53,3 +53,12 @@ MASK_DIR = os.getenv("MASK_DIR", "/app/landmask")
 # ---------------------------------------------------------------------------
 COPERNICUS_USERNAME = os.getenv("COPERNICUS_USERNAME", "")
 COPERNICUS_PASSWORD = os.getenv("COPERNICUS_PASSWORD", "")
+
+# ---------------------------------------------------------------------------
+# AISStream.io (real-time AIS via WebSocket)
+# ---------------------------------------------------------------------------
+AISSTREAM_API_KEY = os.getenv("AISSTREAM_API_KEY", "")
+# Bounding boxes as JSON string: [[[-90,-180],[90,180]]] = entire world
+AISSTREAM_BBOX = os.getenv("AISSTREAM_BBOX", "[[[-90,-180],[90,180]]]")
+# Enable/disable live AIS on startup (default: auto-start if key is set)
+AISSTREAM_AUTO_START = os.getenv("AISSTREAM_AUTO_START", "true").lower() == "true"

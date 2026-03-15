@@ -1,20 +1,23 @@
-import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
-import { Polyline, CircleMarker, useMap, useMapEvent } from 'react-leaflet';
-import { API_BASE_URL } from '@/lib/api';
+"use client";
+
+import { useEffect, useState, useCallback, useRef, Fragment } from "react";
+import { Polyline, CircleMarker, useMap, useMapEvent } from "react-leaflet";
+import { API_BASE_URL } from "@/lib/api";
 
 interface AISTrack {
     mmsi: number;
-    points: { lat: number; lon: number, timestamp: string }[];
+    points: { lat: number; lon: number; timestamp: string }[];
+    centerIdx?: number;
 }
 
 export const AISTrackLayer = ({
     show,
     playbackTime,
-    correlatedVessels = []
+    correlatedVessels = [],
 }: {
     show: boolean;
     playbackTime: Date;
-    correlatedVessels?: { mmsi: number, lat: number, lon: number, detectionTime: number }[];
+    correlatedVessels?: { mmsi: number; lat: number; lon: number; detectionTime: number }[];
 }) => {
     const [tracks, setTracks] = useState<AISTrack[]>([]);
     const map = useMap();
@@ -30,14 +33,12 @@ export const AISTrackLayer = ({
         const bounds = map.getBounds();
         const zoom = map.getZoom();
 
-        // Round playback time to the nearest 12 hours to prevent request spam during playback
         const chunkMs = 12 * 60 * 60 * 1000;
         const roundedTimeMs = Math.round(playbackTime.getTime() / chunkMs) * chunkMs;
 
-        // Define a 48-hour window for better continuity
         const time_start = new Date(roundedTimeMs - 24 * 60 * 60 * 1000).toISOString();
         const time_end = new Date(roundedTimeMs + 24 * 60 * 60 * 1000).toISOString();
-        const mmsisStr = correlatedVessels.map(v => v.mmsi).join(',');
+        const mmsisStr = correlatedVessels.map(v => v.mmsi).join(",");
 
         const paramsStr = `${bounds.toBBoxString()}-${zoom}-${time_start}-${time_end}-${mmsisStr}`;
         if (paramsStr === lastFetchParams.current) return;
@@ -55,7 +56,7 @@ export const AISTrackLayer = ({
                 max_lon: bounds.getEast().toFixed(6),
                 max_lat: bounds.getNorth().toFixed(6),
                 zoom: zoom.toString(),
-                limit: '2000',
+                limit: "2000",
                 time_start,
                 time_end,
                 mmsis: mmsisStr,
@@ -67,13 +68,14 @@ export const AISTrackLayer = ({
                 const data = await response.json();
                 setTracks(data.tracks || []);
             }
-        } catch (err: any) {
-            if (err.name === 'AbortError') return;
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === "AbortError") return;
             console.error("Failed to fetch AIS tracks:", err);
         }
-    }, [map, show, playbackTime, correlatedVessels.map(v => v.mmsi).join(',')]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [map, show, playbackTime, correlatedVessels.map(v => v.mmsi).join(",")]);
 
-    useMapEvent('moveend', fetchTracks);
+    useMapEvent("moveend", fetchTracks);
 
     useEffect(() => {
         if (show) {
@@ -86,15 +88,12 @@ export const AISTrackLayer = ({
 
     if (!show) return null;
 
-    // Filter tracks to only show those that belong to a currently visible identified vessel
-    // and limit to recent ~15 points to avoid clutter, rendering as fading segments
     const vesselMap = new Map(correlatedVessels.map(v => [v.mmsi, v]));
     const filteredTracks = tracks
         .filter(t => vesselMap.has(t.mmsi))
         .map(t => {
             const vessel = vesselMap.get(t.mmsi)!;
 
-            // Find closest point to detection time
             let closestIdx = -1;
             let minDiff = Infinity;
 
@@ -109,14 +108,11 @@ export const AISTrackLayer = ({
             });
 
             if (closestIdx === -1) {
-                // Fallback to recent points if no timestamps match
                 return { ...t, points: t.points.slice(-21), centerIdx: 10 };
             }
 
-            // Take 10 points before, and 10 after
             const startIdx = Math.max(0, closestIdx - 10);
             const endIdx = Math.min(t.points.length, closestIdx + 11);
-
             const slicedPoints = t.points.slice(startIdx, endIdx);
             const newCenterIdx = closestIdx - startIdx;
 
@@ -127,18 +123,12 @@ export const AISTrackLayer = ({
         <>
             {filteredTracks.map((track) => (
                 <Fragment key={`track-group-${track.mmsi}`}>
-                    {/* Render segments between points so they fade out from the center detection point */}
                     {track.points.map((p, idx) => {
                         const nextP = track.points[idx + 1];
-
-                        // Calculate fade based on distance from the center detection point
-                        // 0 at ends, 1 at center
-                        const distFromCenter = Math.abs(idx - track.centerIdx);
+                        const distFromCenter = Math.abs(idx - (track.centerIdx ?? 10));
                         const maxDist = 10;
                         const fadeFactor = Math.max(0, 1 - (distFromCenter / maxDist));
-
-                        const fadeOpacity = 0.15 + fadeFactor * 0.75; // 0.15 to 0.90
-
+                        const fadeOpacity = 0.15 + fadeFactor * 0.75;
 
                         return (
                             <Fragment key={`ais-seg-${track.mmsi}-${idx}`}>
@@ -146,8 +136,8 @@ export const AISTrackLayer = ({
                                     center={[p.lat, p.lon]}
                                     radius={2}
                                     pathOptions={{
-                                        color: '#34d399', // Emerald 400
-                                        fillColor: '#34d399',
+                                        color: "#34d399",
+                                        fillColor: "#34d399",
                                         fillOpacity: fadeOpacity,
                                         stroke: false,
                                         interactive: false,
@@ -157,9 +147,9 @@ export const AISTrackLayer = ({
                                     <Polyline
                                         positions={[[p.lat, p.lon], [nextP.lat, nextP.lon]]}
                                         pathOptions={{
-                                            color: '#34d399',
+                                            color: "#34d399",
                                             weight: 2,
-                                            opacity: fadeOpacity * 0.8, // Slightly more transparent than the circle
+                                            opacity: fadeOpacity * 0.8,
                                             interactive: false,
                                         }}
                                     />

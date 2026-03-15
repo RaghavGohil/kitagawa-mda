@@ -4,31 +4,36 @@ FROM node:20-slim AS build
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json* pnpm-lock.yaml* bun.lockb* ./
+COPY package.json package-lock.json* ./
 
 # Install dependencies
-# Using npm for simplicity in Docker
-RUN npm install
+RUN npm ci
 
 # Copy source
 COPY . .
 
-# Set API URL at build time (Vite bakes import.meta.env at build time)
-ARG VITE_API_URL=http://localhost:8000
-ENV VITE_API_URL=$VITE_API_URL
+# Set API URL at build time
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
-# Build the app
+# Build the app with standalone output
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM node:20-slim AS runner
 
-# Copy build artifacts from build stage
-COPY --from=build /app/dist /usr/share/nginx/html
+WORKDIR /app
 
-# Replace default nginx config if needed
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
+ENV NODE_ENV=production
 
-EXPOSE 80
+# Copy standalone output
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
 
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

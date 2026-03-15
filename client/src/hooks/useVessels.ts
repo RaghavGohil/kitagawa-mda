@@ -1,133 +1,133 @@
+"use client";
+
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchVessels,
-  fetchVessel,
-  fetchAlerts,
-  fetchStats,
-  checkApiHealth,
-  fetchPipelineStatus,
+    fetchVessels,
+    fetchVessel,
+    fetchAlerts,
+    fetchStats,
+    checkApiHealth,
+    fetchPipelineStatus,
+    API_BASE_URL,
 } from "@/lib/api";
 
 export function useVessels(options?: {
-  anomalyOnly?: boolean;
-  satelliteType?: "SAR" | "EO";
-  limit?: number;
-  offset?: number;
-  bounds?: { minLon: number; minLat: number; maxLon: number; maxLat: number };
-  zoom?: number;
+    anomalyOnly?: boolean;
+    satelliteType?: "SAR" | "EO";
+    limit?: number;
+    offset?: number;
+    bounds?: { minLon: number; minLat: number; maxLon: number; maxLat: number };
+    zoom?: number;
 }) {
-  return useQuery({
-    queryKey: ["vessels", options],
-    queryFn: () => fetchVessels(options),
-    placeholderData: (previousData) => previousData,
-    staleTime: 30 * 1000, // 30 seconds — cached data shown instantly on reload
-    refetchInterval: 30 * 1000, // 30 seconds
-  });
+    return useQuery({
+        queryKey: ["vessels", options],
+        queryFn: () => fetchVessels(options),
+        placeholderData: (previousData) => previousData,
+        staleTime: 30 * 1000,
+        refetchInterval: 30 * 1000,
+    });
 }
 
 export function useVessel(vesselId: string | null | undefined) {
-  return useQuery({
-    queryKey: ["vessel", vesselId],
-    queryFn: () => fetchVessel(vesselId!),
-    enabled: !!vesselId,
-    staleTime: 60 * 1000,
-  });
+    return useQuery({
+        queryKey: ["vessel", vesselId],
+        queryFn: () => fetchVessel(vesselId!),
+        enabled: !!vesselId,
+        staleTime: 60 * 1000,
+    });
 }
 
 export function useAlerts(limit?: number) {
-  return useQuery({
-    queryKey: ["alerts", limit],
-    queryFn: () => fetchAlerts(limit),
-    staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
-  });
+    return useQuery({
+        queryKey: ["alerts", limit],
+        queryFn: () => fetchAlerts(limit),
+        staleTime: 30 * 1000,
+        refetchInterval: 60 * 1000,
+    });
 }
 
 export function useStats() {
-  return useQuery({
-    queryKey: ["stats"],
-    queryFn: fetchStats,
-    staleTime: 120 * 1000, // 2 minutes — stats don't change often
-    refetchInterval: 120 * 1000,
-  });
+    return useQuery({
+        queryKey: ["stats"],
+        queryFn: fetchStats,
+        staleTime: 120 * 1000,
+        refetchInterval: 120 * 1000,
+    });
 }
 
 export function useApiHealth() {
-  return useQuery({
-    queryKey: ["health"],
-    queryFn: checkApiHealth,
-    staleTime: 10 * 1000,
-    refetchInterval: 30 * 1000,
-    retry: 1,
-  });
+    return useQuery({
+        queryKey: ["health"],
+        queryFn: checkApiHealth,
+        staleTime: 10 * 1000,
+        refetchInterval: 30 * 1000,
+        retry: 1,
+    });
 }
 
 export function usePipelineStatus() {
-  const queryClient = useQueryClient();
+    const queryClient = useQueryClient();
 
-  useEffect(() => {
-    // Construct WS URL from API URL base
-    const apiUrl = (import.meta as any).env.VITE_API_URL || "http://localhost:8000";
-    // If it's localhost:8000, use it. In prod, it might be the same domain.
-    const wsBase = apiUrl.replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/api/v1/pipeline/ws`;
+    useEffect(() => {
+        const wsBase = API_BASE_URL.replace(/^http/, "ws");
+        const wsUrl = `${wsBase}/api/v1/pipeline/ws`;
 
-    let socket: WebSocket | null = null;
-    let reconnectTimeout: any = null;
+        let socket: WebSocket | null = null;
+        let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const connect = () => {
-      try {
-        socket = new WebSocket(wsUrl);
+        const connect = () => {
+            try {
+                socket = new WebSocket(wsUrl);
 
-        socket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            const prev = queryClient.getQueryData(["pipeline-status"]) as any;
-            queryClient.setQueryData(["pipeline-status"], data);
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        const prev = queryClient.getQueryData(["pipeline-status"]) as Record<string, unknown> | undefined;
+                        queryClient.setQueryData(["pipeline-status"], data);
 
-            // If we moved to a new image, finished a stage, or changed overall status, refetch data
-            if (data.current_image !== prev?.current_image ||
-              data.current_stage !== prev?.current_stage ||
-              data.status !== prev?.status) {
-              queryClient.invalidateQueries({ queryKey: ["vessels"] });
-              queryClient.invalidateQueries({ queryKey: ["alerts"] });
-              queryClient.invalidateQueries({ queryKey: ["stats"] });
+                        if (
+                            data.current_image !== prev?.current_image ||
+                            data.current_stage !== prev?.current_stage ||
+                            data.status !== prev?.status
+                        ) {
+                            queryClient.invalidateQueries({ queryKey: ["vessels"] });
+                            queryClient.invalidateQueries({ queryKey: ["alerts"] });
+                            queryClient.invalidateQueries({ queryKey: ["stats"] });
+                        }
+                    } catch (err) {
+                        console.error("[WS] Data parse error", err);
+                    }
+                };
+
+                socket.onclose = () => {
+                    reconnectTimeout = setTimeout(connect, 5000);
+                };
+
+                socket.onerror = () => {
+                    socket?.close();
+                };
+            } catch (err) {
+                console.error("[WS] Connection error", err);
+                reconnectTimeout = setTimeout(connect, 5000);
             }
-          } catch (err) {
-            console.error("[WS] Data parse error", err);
-          }
         };
 
-        socket.onclose = () => {
-          reconnectTimeout = setTimeout(connect, 5000);
+        connect();
+
+        return () => {
+            if (socket) socket.close();
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
         };
+    }, [queryClient]);
 
-        socket.onerror = () => {
-          socket?.close();
-        };
-      } catch (err) {
-        console.error("[WS] Connection error", err);
-        reconnectTimeout = setTimeout(connect, 5000);
-      }
-    };
-
-    connect();
-
-    return () => {
-      if (socket) socket.close();
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-    };
-  }, [queryClient]);
-
-  return useQuery({
-    queryKey: ["pipeline-status"],
-    queryFn: fetchPipelineStatus,
-    staleTime: 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      // Much slower polling since we have WS as primary
-      return data?.status === "running" ? 10000 : 30000;
-    },
-  });
+    return useQuery({
+        queryKey: ["pipeline-status"],
+        queryFn: fetchPipelineStatus,
+        staleTime: 1000,
+        refetchInterval: (query) => {
+            const data = query.state.data;
+            return data?.status === "running" ? 10000 : 30000;
+        },
+    });
 }
