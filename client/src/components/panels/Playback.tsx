@@ -18,8 +18,9 @@ interface PlaybackProps {
 
 export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact }: PlaybackProps) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const [startTime, setStartTime] = useState(() => new Date("2025-01-01T00:00:00Z"));
-    const [endTime, setEndTime] = useState(() => new Date("2025-02-01T00:00:00Z"));
+    const [isLiveMode, setIsLiveMode] = useState(true);
+    const [startTime, setStartTime] = useState(() => new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const [endTime, setEndTime] = useState(() => new Date());
     const [currentTime, setCurrentTime] = useState(100);
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
     const [mounted, setMounted] = useState(false);
@@ -28,32 +29,47 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
         setMounted(true);
     }, []);
 
-    const isLive = currentTime >= 99.5;
+    // If we are in Live mode, we want to update displayTime every second
+    const [liveNow, setLiveNow] = useState(new Date());
 
-    const getTimeFromValue = useCallback((value: number): Date => {
+    useEffect(() => {
+        if (!isLiveMode) return;
+        const interval = setInterval(() => setLiveNow(new Date()), 1000);
+        return () => clearInterval(interval);
+    }, [isLiveMode]);
+
+    const displayTime = useMemo(() => {
+        if (isLiveMode) return liveNow;
         const totalMs = endTime.getTime() - startTime.getTime();
-        return new Date(startTime.getTime() + (value / 100) * totalMs);
-    }, [startTime, endTime]);
-
-    const displayTime = useMemo(
-        () => isLive ? new Date() : getTimeFromValue(currentTime),
-        [currentTime, getTimeFromValue, isLive],
-    );
+        return new Date(startTime.getTime() + (currentTime / 100) * totalMs);
+    }, [isLiveMode, liveNow, startTime, endTime, currentTime]);
 
     useEffect(() => { onTimeChange?.(displayTime); }, [displayTime, onTimeChange]);
     useEffect(() => { onTimeRangeChange?.(startTime, endTime); }, [startTime, endTime, onTimeRangeChange]);
 
     useEffect(() => {
         if (!jumpToTime) return;
-        const totalMs = endTime.getTime() - startTime.getTime();
+
+        let currentStart = startTime;
+        let currentEnd = endTime;
+
+        // Auto-expand if jumpToTime is outside range (earlier than start)
+        if (jumpToTime < startTime) {
+            const newStart = new Date(jumpToTime.getTime() - 24 * 60 * 60 * 1000);
+            setStartTime(newStart);
+            currentStart = newStart;
+        }
+
+        const totalMs = currentEnd.getTime() - currentStart.getTime();
         if (totalMs <= 0) return;
-        const pct = Math.max(0, Math.min(100, ((jumpToTime.getTime() - startTime.getTime()) / totalMs) * 100));
+        const pct = Math.max(0, Math.min(100, ((jumpToTime.getTime() - currentStart.getTime()) / totalMs) * 100));
         setCurrentTime(pct);
         setIsPlaying(false);
+        setIsLiveMode(false);
     }, [jumpToTime, startTime, endTime]);
 
     useEffect(() => {
-        if (!isPlaying) return;
+        if (!isPlaying || isLiveMode) return;
         const interval = setInterval(() => {
             setCurrentTime(prev => {
                 const totalMs = endTime.getTime() - startTime.getTime();
@@ -64,7 +80,7 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
             });
         }, 100);
         return () => clearInterval(interval);
-    }, [isPlaying, playbackSpeed, startTime, endTime]);
+    }, [isPlaying, isLiveMode, playbackSpeed, startTime, endTime]);
 
     return (
         <div className="rounded-lg bg-background border border-border p-4 shadow-lg w-full">
@@ -77,12 +93,12 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                 <div className="flex items-center gap-2">
                     <span className={cn(
                         "text-sm font-mono tabular-nums",
-                        isLive ? "text-red-500" : "text-foreground",
+                        isLiveMode ? "text-red-500" : "text-foreground",
                     )}>
                         {mounted ? format(displayTime, compact ? "HH:mm:ss" : "MMM dd, yyyy HH:mm:ss") : "\u00A0"}
                     </span>
-                    {isLive && (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors cursor-default group/live">
+                    {isLiveMode && (
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 transition-colors cursor-default group/live">
                             <span className="relative flex h-2 w-2">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
@@ -106,8 +122,12 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                 <input
                     type="range"
                     min={0} max={100} step={0.01}
-                    value={currentTime}
-                    onChange={(e) => { setCurrentTime(parseFloat(e.target.value)); setIsPlaying(false); }}
+                    value={isLiveMode ? 100 : currentTime}
+                    onChange={(e) => {
+                        setCurrentTime(parseFloat(e.target.value));
+                        setIsPlaying(false);
+                        setIsLiveMode(false);
+                    }}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
             </div>
@@ -125,20 +145,43 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
             <div className="flex items-center justify-between gap-3">
                 {/* Transport */}
                 <div className="flex items-center gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(0); setIsPlaying(false); }}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(0); setIsPlaying(false); setIsLiveMode(false); }}>
                         <SkipBack className="h-4 w-4" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => setIsPlaying(!isPlaying)}>
+                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => { setIsPlaying(!isPlaying); setIsLiveMode(false); }}>
                         {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(100); setIsPlaying(false); }}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(100); setIsPlaying(false); setIsLiveMode(false); }}>
                         <SkipForward className="h-4 w-4" />
+                    </Button>
+
+                    <div className="h-6 w-px bg-border mx-1.5 self-center" />
+
+                    <Button
+                        variant={isLiveMode ? "secondary" : "outline"}
+                        size="icon"
+                        className={cn(
+                            "h-9 w-9 transition-all duration-200 active:translate-y-px",
+                            isLiveMode ? "text-red-500 bg-red-500/10 border-red-500/20 hover:bg-red-500/20" : "text-muted-foreground"
+                        )}
+                        onClick={() => {
+                            const now = new Date();
+                            const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                            setEndTime(now);
+                            setStartTime(dayAgo);
+                            setIsLiveMode(true);
+                            setIsPlaying(false);
+                            setCurrentTime(100);
+                        }}
+                        title="Live Mode"
+                    >
+                        <Radio className={cn("h-4 w-4", isLiveMode && "animate-pulse")} />
                     </Button>
                 </div>
 
                 {/* Speed + Settings */}
                 <div className="flex items-center gap-2">
-                    <Select value={playbackSpeed.toString()} onValueChange={(v) => { if (v) setPlaybackSpeed(parseFloat(v)); }}>
+                    <Select value={playbackSpeed.toString()} onValueChange={(v) => { if (v) { setPlaybackSpeed(parseFloat(v)); setIsLiveMode(false); } }}>
                         <SelectTrigger className={cn("h-9 text-sm w-fit min-w-[64px]")}>
                             <SelectValue />
                         </SelectTrigger>
@@ -169,7 +212,17 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                                             type="datetime-local"
                                             className="w-full bg-secondary border border-border px-3 py-2 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                                             value={format(startTime, "yyyy-MM-dd'T'HH:mm")}
-                                            onChange={(e) => { const d = new Date(e.target.value); if (!isNaN(d.getTime())) setStartTime(d); }}
+                                            onChange={(e) => {
+                                                const d = new Date(e.target.value);
+                                                if (!isNaN(d.getTime())) {
+                                                    if (d > endTime) {
+                                                        // Prevent start > end
+                                                        setEndTime(new Date(d.getTime() + 60000));
+                                                    }
+                                                    setStartTime(d);
+                                                    setIsLiveMode(false);
+                                                }
+                                            }}
                                         />
                                     </div>
                                     <div className="space-y-1.5">
@@ -178,7 +231,17 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                                             type="datetime-local"
                                             className="w-full bg-secondary border border-border px-3 py-2 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                                             value={format(endTime, "yyyy-MM-dd'T'HH:mm")}
-                                            onChange={(e) => { const d = new Date(e.target.value); if (!isNaN(d.getTime())) setEndTime(d); }}
+                                            onChange={(e) => {
+                                                const d = new Date(e.target.value);
+                                                if (!isNaN(d.getTime())) {
+                                                    if (d < startTime) {
+                                                        // Prevent end < start, jump back 24h
+                                                        setStartTime(new Date(d.getTime() - 24 * 60 * 60 * 1000));
+                                                    }
+                                                    setEndTime(d);
+                                                    setIsLiveMode(false);
+                                                }
+                                            }}
                                         />
                                     </div>
                                 </div>

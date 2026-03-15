@@ -39,7 +39,7 @@ export default function DashboardPage() {
   const [showTracks, setShowTracks] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(new Date());
   const [jumpToTime, setJumpToTime] = useState<Date | null>(null);
-  const [timeRangeMs, setTimeRangeMs] = useState<number>(31 * 24 * 60 * 60 * 1000);
+  const [timeRangeMs, setTimeRangeMs] = useState<number>(24 * 60 * 60 * 1000);
 
   const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<Set<AnomalyType>>(
     new Set(["identified", "no_anomaly", "anomaly", "unidentified"]),
@@ -157,7 +157,7 @@ export default function DashboardPage() {
               {/* Sidebar header */}
               <div className="flex items-center justify-between px-5 h-20 border-b border-border shrink-0">
                 <div className="flex flex-col">
-                  <h2 className="text-sm font-bold uppercase tracking-widest text-foreground">Explorer</h2>
+                  <h2 className="text-lg font-bold text-foreground">Explorer</h2>
                 </div>
                 <Button variant="ghost" size="icon" className="h-8 w-8 -mr-1" onClick={() => setSidebarOpen(false)}>
                   <X className="h-4 w-4" />
