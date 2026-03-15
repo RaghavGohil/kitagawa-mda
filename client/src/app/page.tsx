@@ -202,7 +202,7 @@ export default function DashboardPage() {
           )}
 
           {/* =================== PLAYBACK =================== */}
-          <div className="absolute bottom-6 left-0 right-0 z-10 px-4 flex justify-center pointer-events-none">
+          <div className="absolute bottom-4 left-0 right-0 z-10 px-4 flex justify-center pointer-events-none">
             <div className="w-full max-w-[600px] pointer-events-auto">
               <Playback
                 onTimeChange={handleTimeChange}
