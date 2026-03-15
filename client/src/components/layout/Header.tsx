@@ -105,7 +105,7 @@ export const Header = ({ isMobile }: HeaderProps) => {
                         {/* Modal header */}
                         <div className="flex justify-between items-center px-5 py-4 border-b border-border shrink-0 bg-background/50 backdrop-blur-md">
                             <div>
-                                <h3 className="text-lg font-bold tracking-tight">Image Queue</h3>
+                                <h3 className="text-lg font-bold tracking-tight">Queue</h3>
                             </div>
                             <Button variant="ghost" size="icon" className="h-9 w-9 hover:bg-muted" onClick={() => setIsQueueOpen(false)}>
                                 <X className="h-5 w-5" />

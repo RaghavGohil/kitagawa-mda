@@ -175,7 +175,7 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                         }}
                         title="Live Mode"
                     >
-                        <Radio className={cn("h-4 w-4", isLiveMode && "animate-pulse")} />
+                        <Radio className={cn("h-4 w-4")} />
                     </Button>
                 </div>
 

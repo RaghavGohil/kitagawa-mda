@@ -52,7 +52,11 @@ def get_minio_client() -> Minio:
 
 # Chip generation
 # ---------------------------------------------------------------------------
-async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] = None, progress_callback: Optional[Callable[[float], Awaitable[None]]] = None) -> int:
+async def generate_and_upload_chips(
+    db: AsyncSession,
+    image_name: Optional[str] = None,
+    progress_callback: Optional[Callable[[float], Awaitable[None]]] = None,
+) -> int:
     """
     For all detections without an image chip, crop the detection area
     from the source image and upload to MinIO.
@@ -84,14 +88,16 @@ async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] 
     if image_name:
         sql_base += " AND d.image_name = :img"
         params["img"] = image_name
-    
+
     sql_base += " ORDER BY d.id"
 
     result = await db.execute(text(sql_base), params)
     rows = result.fetchall()
 
     if not rows:
-        print(f"[Chips] No new chips to generate{f' for {image_name}' if image_name else ''}.")
+        print(
+            f"[Chips] No new chips to generate{f' for {image_name}' if image_name else ''}."
+        )
         return 0
 
     print(f"[Chips] Processing {len(rows)} detections for chip generation...")
@@ -104,7 +110,7 @@ async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] 
     for i, row in enumerate(rows):
         if progress_callback:
             await progress_callback((i + 1) / total_rows * 100.0)
-            
+
         det_id = row[0]
         det_img_name = row[1]  # Avoid shadowing the function parameter
         sensor_type = row[2]
@@ -114,8 +120,17 @@ async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] 
         # Run blocking rasterio I/O in executor with timeout
         try:
             chip = await asyncio.wait_for(
-                loop.run_in_executor(None, _extract_chip, det_img_name, sensor_type, xmin, ymin, xmax, ymax),
-                timeout=30.0
+                loop.run_in_executor(
+                    None,
+                    _extract_chip,
+                    det_img_name,
+                    sensor_type,
+                    xmin,
+                    ymin,
+                    xmax,
+                    ymax,
+                ),
+                timeout=30.0,
             )
         except asyncio.TimeoutError:
             print(f"[Chips] Timeout extracting chip for detection {det_id}, skipping.")
@@ -130,27 +145,38 @@ async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] 
             skipped += 1
             continue
 
-        # Encode as PNG
-        success, buffer = cv2.imencode(".png", chip)
-        if not success:
+        # Encode as PNG and Upload to MinIO (Moved to executor)
+        try:
+            minio_key = f"{sensor_type}/{det_img_name}/{det_id}.png"
+
+            # We bundle these so we only hit the executor once per chip
+            def _save_and_upload():
+                success, buffer = cv2.imencode(".png", chip)
+                if not success:
+                    return False
+
+                data = io.BytesIO(buffer.tobytes())
+                data_len = len(buffer.tobytes())
+
+                client.put_object(
+                    MINIO_BUCKET,
+                    minio_key,
+                    data,
+                    data_len,
+                    content_type="image/png",
+                )
+                return True
+
+            success = await loop.run_in_executor(None, _save_and_upload)
+            if not success:
+                skipped += 1
+                continue
+        except S3Error as e:
+            print(f"[Chips] MinIO upload failed for {det_id}: {e}")
             skipped += 1
             continue
-
-        # Upload to MinIO
-        minio_key = f"{sensor_type}/{det_img_name}/{det_id}.png"
-        data = io.BytesIO(buffer.tobytes())
-        data_len = len(buffer.tobytes())
-
-        try:
-            client.put_object(
-                MINIO_BUCKET,
-                minio_key,
-                data,
-                data_len,
-                content_type="image/png",
-            )
-        except S3Error as e:
-            print(f"[Chips] MinIO upload failed for {minio_key}: {e}")
+        except Exception as e:
+            print(f"[Chips] Error processing/uploading chip {det_id}: {e}")
             skipped += 1
             continue
 
@@ -176,12 +202,13 @@ async def generate_and_upload_chips(db: AsyncSession, image_name: Optional[str] 
 
         # Log progress every 10 chips
         if (i + 1) % 10 == 0:
-            print(f"[Chips] Progress: {i+1}/{total_rows} (created={created}, skipped={skipped})")
+            print(
+                f"[Chips] Progress: {i + 1}/{total_rows} (created={created}, skipped={skipped})"
+            )
 
     await db.commit()
     print(f"[Chips] Done. Generated {created} chips, skipped {skipped}.")
     return created
-
 
 
 def get_chip_url(minio_key: str, expires_hours: int = 24) -> str:
@@ -214,8 +241,7 @@ def _extract_chip(
     Extract a chip from the source satellite image.
     Returns BGR numpy array or None.
     """
-    import rasterio
-    from rasterio.windows import Window
+    pass
 
     safe_folder = os.path.join(IMAGES_DIR, image_name)
     if not os.path.isdir(safe_folder):
