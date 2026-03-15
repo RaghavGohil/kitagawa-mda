@@ -110,26 +110,40 @@
 }
 
 .leaflet-control-zoom {
-  background: oklch(0.23 0.01 240) !important;
-  border: 1px solid oklch(0.28 0.01 240) !important;
-  border-radius: 0.625rem !important;
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
   overflow: hidden;
-  margin: 12px !important;
+  margin: 16px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
 }
 
 .leaflet-control-zoom a {
   background: transparent !important;
-  color: oklch(0.75 0.01 240) !important;
-  border-bottom: 1px solid oklch(0.28 0.01 240) !important;
-  width: 32px !important;
-  height: 32px !important;
-  line-height: 32px !important;
-  font-size: 16px !important;
+  color: var(--muted-foreground) !important;
+  border-bottom: 1px solid var(--border) !important;
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  font-size: 18px !important;
+  transition: all 0.2s ease !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.leaflet-control-zoom a:last-child {
+  border-bottom: none !important;
 }
 
 .leaflet-control-zoom a:hover {
-  background: oklch(0.28 0.01 240) !important;
-  color: oklch(0.90 0.01 240) !important;
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+.leaflet-control-zoom a:active {
+  transform: translateY(1px) !important;
+  background: var(--muted) !important;
 }
 
 .leaflet-control-attribution {
@@ -137,6 +151,18 @@
   color: oklch(0.50 0.01 240) !important;
   font-size: 10px !important;
   padding: 2px 6px !important;
+}
+
+/* Datetime-local Calendar Icon Styling */
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 .leaflet-popup-content-wrapper {

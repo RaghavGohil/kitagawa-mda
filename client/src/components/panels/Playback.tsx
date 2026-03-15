@@ -123,7 +123,7 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
             <Separator className="mb-3" />
 
             {/* Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-center sm:justify-between gap-4">
                 {/* Transport */}
                 <div className="flex items-center gap-1 shrink-0">
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(0); setIsPlaying(false); }}>
@@ -140,7 +140,7 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                 {/* Speed + Settings */}
                 <div className="flex items-center gap-2">
                     <Select value={playbackSpeed.toString()} onValueChange={(v) => { if (v) setPlaybackSpeed(parseFloat(v)); }}>
-                        <SelectTrigger className={cn("h-9 text-sm", compact ? "w-[64px]" : "w-[80px]")}>
+                        <SelectTrigger className={cn("h-9 text-sm w-fit min-w-[64px]")}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -153,8 +153,8 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                     </Select>
 
                     <Popover>
-                        <PopoverTrigger className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground">
-                            <Settings2 className="h-4 w-4" />
+                        <PopoverTrigger className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background hover:bg-muted hover:text-foreground transition-all duration-200 active:translate-y-px">
+                            <Settings2 className="h-4 w-4 text-foreground" />
                         </PopoverTrigger>
                         <PopoverContent className="w-72 p-4" align="end" side="top">
                             <div className="space-y-4">

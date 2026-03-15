@@ -140,7 +140,7 @@ export default function DashboardPage() {
               onViewChange={handleViewChange}
             />
             {isLoadingVessels && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-1000 bg-background/95 backdrop-blur-md border border-border rounded-lg px-6 py-2.5 flex items-center gap-3 shadow-2xl transition-all duration-300">
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-1000 bg-background/95 backdrop-blur-md border border-border rounded-lg px-6 py-2.5 flex items-center gap-3 shadow-2xl transition-all duration-300">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
                 <span className="text-sm font-medium tracking-tight text-foreground">Loading Vessels...</span>
               </div>
