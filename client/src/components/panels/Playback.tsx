@@ -112,18 +112,17 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                 />
             </div>
 
-            {/* Time labels */}
-            {!compact && (
-                <div className="flex justify-between text-xs text-muted-foreground mb-3">
-                    <span>{format(startTime, "MMM dd, yyyy")}</span>
-                    <span>{format(endTime, "MMM dd, yyyy")}</span>
-                </div>
-            )}
+            {/* Time labels - Always visible, refined for mobile */}
+            <div className="flex justify-between text-[10px] sm:text-xs text-muted-foreground mb-3">
+                <span>{format(startTime, "MMM dd, yyyy")}</span>
+                <span>{format(endTime, "MMM dd, yyyy")}</span>
+            </div>
 
             <Separator className="mb-3" />
 
             {/* Controls */}
-            <div className="flex flex-wrap items-center justify-center sm:justify-between gap-4">
+            {/* Controls */}
+            <div className="flex items-center justify-between gap-3">
                 {/* Transport */}
                 <div className="flex items-center gap-1 shrink-0">
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(0); setIsPlaying(false); }}>
