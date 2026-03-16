@@ -3,17 +3,20 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update -y && \
+RUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && \
     apt-get install -y --no-install-recommends \
     build-essential \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
-    python3-dev && \
-    rm -rf /var/lib/apt/lists/*
+    python3-dev
 
 COPY backend_server/requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-cache-dir -r requirements.txt
 
 # Final stage
 FROM python:3.11-slim
@@ -21,13 +24,14 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install runtime dependencies ONLY
-RUN apt-get update -y && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && \
     apt-get install -y --no-install-recommends \
     gdal-bin \
     libgeos-c1v5 \
     curl \
-    unzip && \
-    rm -rf /var/lib/apt/lists/*
+    unzip
 
 # Pre-download Landmask & Boundaries (Internal to Image)
 WORKDIR /app/landmask

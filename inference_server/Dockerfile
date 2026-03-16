@@ -4,11 +4,13 @@ FROM pytorch/pytorch:2.9.0-cuda12.8-cudnn9-runtime AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update -y && \
+RUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && \
     apt-get install -y --no-install-recommends \
     build-essential \
-    libgdal-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libgdal-dev
 
 # Environment variables for Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -18,7 +20,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install Heavy Python packages in builder
 # Using --user to easily copy them later
 COPY inference_server/requirements.txt .
-RUN pip install --user --no-cache-dir GDAL==3.4.1 && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-cache-dir GDAL==3.4.1 && \
     pip install --user --no-cache-dir -r requirements.txt && \
     pip install --user --no-deps ultralytics-thop && \
     pip install --user --no-deps ultralytics==8.3.213 && \
@@ -32,13 +35,14 @@ FROM pytorch/pytorch:2.9.0-cuda12.8-cudnn9-runtime
 WORKDIR /app
 
 # Install ONLY necessary runtime libraries
-RUN apt-get update -y && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && \
     apt-get install -y --no-install-recommends \
     gdal-bin \
     libglib2.0-0 \
     curl \
-    unzip && \
-    rm -rf /var/lib/apt/lists/*
+    unzip
 
 # Pre-download Landmask (Internal to Image)
 WORKDIR /app/landmask

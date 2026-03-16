@@ -41,7 +41,10 @@ async def lifespan(app: FastAPI):
 
     await ensure_local_boundaries()
 
-    asyncio.create_task(start_background_ingest_polling())
+    if not os.getenv("DISABLE_AUTO_INGEST"):
+        asyncio.create_task(start_background_ingest_polling())
+    else:
+        print("[Backend Server] Auto-ingest disabled via DISABLE_AUTO_INGEST flag.")
 
     # Start real-time AIS stream if API key is configured
     from shared.config import AISSTREAM_API_KEY, AISSTREAM_AUTO_START
