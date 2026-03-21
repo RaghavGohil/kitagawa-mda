@@ -109,6 +109,11 @@
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+.custom-map-tiles {
+  /* Soft darkening that preserves the Light Land / Dark Water relationship */
+  filter: brightness(0.6) contrast(1.2) saturate(0.5);
+}
+
 .leaflet-control-zoom {
   background: var(--background) !important;
   border: 1px solid var(--border) !important;

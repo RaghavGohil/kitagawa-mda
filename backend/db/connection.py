@@ -38,12 +38,14 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """
-    Initialize the database using Alembic migrations.
+    Initialize the database.
 
-    Runs 'alembic upgrade head' programmatically so that schema changes
-    are applied incrementally instead of relying on create_all (which
-    can't alter existing tables).
+    1. Ensures PostGIS extension exists.
+    2. Creates all base tables via SQLAlchemy (safe IF NOT EXISTS).
+    3. Runs Alembic migrations for any incremental schema changes.
     """
+    # Import all models here so they are registered with Base.metadata
+    # for the create_all call below.
     from backend.db.models import (
         Detection,
         AISTrack,
@@ -54,55 +56,41 @@ async def init_db():
         MaritimeBoundary,
     )
 
-    # Step 1: Ensure PostGIS extension exists (must happen before migrations)
+    # Step 1: Ensure PostGIS extension exists
     async with engine.begin() as conn:
         await conn.execute(
             __import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS postgis")
         )
 
-    # Step 2: Run Alembic migrations (or fall back to create_all)
+    # Step 2: Ensure all base tables exist (SQLAlchemy create_all is safe on existing tables)
+    print("[DB] Ensuring base tables exist...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Step 3: Run Alembic migrations for incremental changes
     import os
-    import glob
 
     alembic_ini = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
-    versions_dir = os.path.join(os.path.dirname(__file__), "..", "alembic", "versions")
 
-    # Check if there are any actual migration files (not just .gitkeep)
-    has_migrations = bool(glob.glob(os.path.join(versions_dir, "*.py")))
+    if os.path.exists(alembic_ini):
+        print("[DB] Running Alembic migrations...")
+        try:
+            from alembic.config import Config
+            from alembic import command
 
-    if os.path.exists(alembic_ini) and has_migrations:
-        from alembic.config import Config
-        from alembic import command
-
-        alembic_cfg = Config(alembic_ini)
-        alembic_cfg.set_main_option(
-            "script_location",
-            os.path.join(os.path.dirname(__file__), "..", "alembic"),
-        )
-        command.upgrade(alembic_cfg, "head")
-        print("[DB] Alembic migrations applied successfully.")
+            alembic_cfg = Config(alembic_ini)
+            alembic_cfg.set_main_option(
+                "script_location",
+                os.path.join(os.path.dirname(__file__), "..", "alembic"),
+            )
+            # Run migrations (matches head)
+            command.upgrade(alembic_cfg, "head")
+            print("[DB] Alembic migrations applied/verified.")
+        except Exception as e:
+            # We don't fail here if it's just a 'version already at head' etc.
+            print(f"[DB] Alembic migration notice: {e}")
     else:
-        # No migrations yet — create tables directly, then stamp so Alembic
-        # knows the current state when the first migration is generated.
-        print("[DB] No Alembic migrations found, using create_all (first-time setup).")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        # Stamp with head so future autogenerate diffs correctly
-        if os.path.exists(alembic_ini):
-            try:
-                from alembic.config import Config
-                from alembic import command
-
-                alembic_cfg = Config(alembic_ini)
-                alembic_cfg.set_main_option(
-                    "script_location",
-                    os.path.join(os.path.dirname(__file__), "..", "alembic"),
-                )
-                command.stamp(alembic_cfg, "head")
-                print("[DB] Stamped Alembic version to 'head'.")
-            except Exception as e:
-                print(f"[DB] Could not stamp Alembic (non-critical): {e}")
+        print("[DB] No alembic.ini found, skipping incremental migrations.")
 
 
 async def close_db():

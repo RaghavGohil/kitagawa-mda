@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from tqdm import tqdm
+import httpx
 
 from shared.config import (
     AIS_DIR,
@@ -81,26 +82,34 @@ def _search_product(token: str, filename: str) -> Optional[str]:
     return val[0]["Id"] if val else None
 
 
-def _download_product(token: str, product_id: str, temp_path: str):
+def _download_product(
+    token: str, product_id: str, temp_path: str, progress_callback=None
+):
     url = f"{DOWNLOAD_BASE}({product_id})/$value"
     with requests.get(
         url, headers={"Authorization": f"Bearer {token}"}, stream=True
     ) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
+        downloaded = 0
         with (
             open(temp_path, "wb") as f,
             tqdm(
                 total=total, unit="B", unit_scale=True, desc=os.path.basename(temp_path)
             ) as bar,
         ):
-            for chunk in r.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(
+                chunk_size=65536
+            ):  # Larger chunks for better perf
                 if chunk:
                     f.write(chunk)
+                    downloaded += len(chunk)
                     bar.update(len(chunk))
+                    if progress_callback and total > 0:
+                        progress_callback(round((downloaded / total) * 100, 1))
 
 
-async def download_images(image_names: list[str]) -> list[str]:
+async def download_images(image_names: list[str], progress_callback=None) -> list[str]:
     """
     Download satellite images from Copernicus Dataspace.
     Returns list of extracted folder paths.
@@ -133,12 +142,16 @@ async def download_images(image_names: list[str]) -> list[str]:
                 continue
 
             try:
-                # We use loop.run_in_executor for the synchronous _download_product
+                # Wrap the callback to include file context if needed
+                def _cb(pct):
+                    if progress_callback:
+                        progress_callback(pct, fname)
+
                 import asyncio
 
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
-                    None, _download_product, token, prod_id, temp_path
+                    None, _download_product, token, prod_id, temp_path, _cb
                 )
                 os.rename(temp_path, zip_path)
             except Exception as e:
@@ -199,99 +212,78 @@ async def download_images(image_names: list[str]) -> list[str]:
 async def search_recent_images(
     instrument: str = "SAR",
     days: int = 7,
+    limit: int = 100,
     start_date: str = None,
     end_date: str = None,
     aoi: str = None,
-) -> list[dict]:
+) -> tuple[list[dict], str]:
     """
-    Search for products on Copernicus Dataspace.
-    instrument: 'SAR' (Sentinel-1) or 'EO' (Sentinel-2)
+    Search CDSE OData for recent Sentinel products.
+    Returns (list of products, filter_expression used).
     """
     if not COPERNICUS_USERNAME or not COPERNICUS_PASSWORD:
-        return []
+        return [], ""
 
     token, _ = _get_token()
 
-    # Sentinel-1 specific or Sentinel-2 specific
-    if instrument == "SAR":
-        collection = "SENTINEL-1"
-        # Search for IW GRDH products (best for vessel detection)
-        specific_filter = "contains(Name, 'IW_GRDH')"
+    if start_date and end_date:
+        t_start = start_date
+        t_end = end_date
     else:
-        collection = "SENTINEL-2"
+        now = datetime.now(timezone.utc)
+        t_start = (now - timedelta(days=days)).isoformat().replace("+00:00", "") + "Z"
+        t_end = now.isoformat().replace("+00:00", "") + "Z"
+
+    # Sentinel-1 (SAR) or Sentinel-2 (EO)
+    collection = "SENTINEL-1" if instrument == "SAR" else "SENTINEL-2"
+
+    specific_filter = ""
+    if instrument == "SAR":
+        # Search for IW GRDH products (best for vessel detection)
+        specific_filter = "contains(Name,'IW_GRDH')"
+    else:
+        # Sentinel-2 L1C products
         specific_filter = "Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'productType' and att/OData.CSC.StringAttribute/Value eq 'S2MSI1C')"
 
-    # Date filtering
-    if start_date and end_date:
-        date_filter = (
-            f"ContentDate/Start gt '{start_date}' and ContentDate/Start lt '{end_date}'"
-        )
-    elif start_date:
-        date_filter = f"ContentDate/Start gt '{start_date}'"
-    else:
-        # Dynamic: Default to last 7 days from now
-        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime(
-            "%Y-%m-%dT%H:%M:%S.000Z"
-        )
-        date_filter = f"ContentDate/Start gt '{seven_days_ago}'"
-
-    print(
-        f"[Ingestion] Searching {collection} ({instrument}) with filter: {date_filter}"
-    )
+    # Date filter
+    date_filter = f"ContentDate/Start gt {t_start} and ContentDate/Start lt {t_end}"
 
     # Build OData filter
-    filter_expr = (
-        f"Collection/Name eq '{collection}' and {specific_filter} and {date_filter}"
+    filter_expr = f"Collection/Name eq '{collection}' and {date_filter}"
+    if specific_filter:
+        filter_expr += f" and {specific_filter}"
+
+    if aoi:
+        # Add spatial filter if AOI provided
+        filter_expr += f" and OData.CSC.Intersects(area=geography'SRID=4326;{aoi}')"
+
+    print(
+        f"[Ingestion] Searching {collection} ({instrument}) with filter: {filter_expr}"
     )
 
-    # Spatial filter (default to global if not provided)
-    if aoi:
-        spatial_filter = f"OData.CSC.Intersects(area=geography'SRID=4326;{aoi}')"
-        filter_expr += f" and {spatial_filter}"
-
-    params = {
-        "$filter": filter_expr,
-        "$top": "50",
-        "$orderby": "ContentDate/Start desc",
-    }
+    url = f"{CATALOG_ODATA}?$filter={filter_expr}&$top={limit}&$orderby=ContentDate/Start desc"
 
     try:
-        import asyncio
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            resp.raise_for_status()
+            data = resp.json()
 
-        loop = asyncio.get_event_loop()
-
-        def _do_search():
-            return requests.get(
-                CATALOG_ODATA,
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-                timeout=30,
-            )
-
-        r = await loop.run_in_executor(None, _do_search)
-        r.raise_for_status()
-        results = r.json().get("value", [])
-
-        print(f"[Ingestion] Found {len(results)} {instrument} products on CDSE.")
-        for res in results[:3]:
-            print(f"  - Product: {res['Name']} ({res['ContentDate']['Start']})")
-
-        products = []
-        for res in results:
-            products.append(
-                {
-                    "id": res["Id"],
-                    "name": res["Name"],
-                    "timestamp": res["ContentDate"]["Start"],
-                    "size_gb": round(res["ContentLength"] / (1024**3), 2)
-                    if res.get("ContentLength")
-                    else 0,
-                }
-            )
-        return products, filter_expr
+            results = []
+            for item in data.get("value", []):
+                results.append(
+                    {
+                        "id": item["Id"],
+                        "name": item["Name"],
+                        "timestamp": item["ContentDate"]["Start"],
+                        "size": item["ContentLength"],
+                    }
+                )
+            print(f"[Ingestion] Found {len(results)} {instrument} products.")
+            return results, filter_expr
     except Exception as e:
-        print(f"[Ingestion] Search failed for {collection}: {e}")
-        return [], ""
+        print(f"[Ingestion] CDSE search failed: {e}")
+        return [], filter_expr
 
 
 # ===================================================================
@@ -356,17 +348,17 @@ async def download_and_ingest_ais(
             links = [a["href"] for a in soup.find_all("a", href=True)]
             base_prefix = index_url.rsplit("/", 1)[0]
         except Exception as e:
-            print(f"[Ingestion] Failed to fetch AIS index for {year}: {e}")
+            print(
+                f"[Ingestion] skipping NOAA AIS fetch for {year} (likely no coverage or too recent): {e}"
+            )
             # Mark ALL dates for this year as no-coverage
-            for d in year_dates:
-                # Store YYYY-MM-DD
-                await _record_ais_coverage(
-                    db, d.strftime("%Y-%m-%d"), has_coverage=False
-                )
+            for d_tuple in year_dates:
+                # d_tuple is (date_str, csv_name)
+                await _record_ais_coverage(db, d_tuple[0], has_coverage=False)
             continue
 
-        for date_obj in year_dates:
-            date_fmt = date_obj.strftime("%Y-%m-%d")
+        for d_tuple in year_dates:
+            date_fmt = d_tuple[0]
 
             # Check if already processed
             already = await check_ais_coverage(db, date_fmt)
@@ -377,9 +369,8 @@ async def download_and_ingest_ais(
             # They seem to provide daily/monthly files depending on recency. For 2024/2025,
             # they often provide daily files like AIS_YYYY_MM_DD.zip or yearly blocks.
             # We look for AIS_YYYY_MM_DD.zip or just the yearly zip.
-            year_str = date_obj.strftime("%Y")
-            mm_str = date_obj.strftime("%m")
-            dd_str = date_obj.strftime("%d")
+            parts = date_fmt.replace("_", "-").split("-")
+            year_str, mm_str, dd_str = parts[0], parts[1], parts[2]
 
             # Possible filenames NOAA uses:
             possible_names = [
@@ -601,11 +592,11 @@ async def _insert_ais_csv(csv_path: str, db: AsyncSession, chunk_size: int) -> i
                     subset=["base_date_time", "latitude", "longitude", "mmsi"]
                 )
 
-                # SPATIAL FILTER
-                min_lon = float(os.getenv("AIS_MIN_LON", "-82.0"))
-                max_lon = float(os.getenv("AIS_MAX_LON", "-65.0"))
-                min_lat = float(os.getenv("AIS_MIN_LAT", "24.0"))
-                max_lat = float(os.getenv("AIS_MAX_LAT", "45.0"))
+                # SPATIAL FILTER (Default to global if not set)
+                min_lon = float(os.getenv("AIS_MIN_LON", "-180.0"))
+                max_lon = float(os.getenv("AIS_MAX_LON", "180.0"))
+                min_lat = float(os.getenv("AIS_MIN_LAT", "-90.0"))
+                max_lat = float(os.getenv("AIS_MAX_LAT", "90.0"))
 
                 df = df[
                     (df["longitude"] >= min_lon)

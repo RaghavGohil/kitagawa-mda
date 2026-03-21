@@ -304,6 +304,16 @@ async def _run_pipeline_task(image_names: list[str]):
         except Exception as be:
             print(f"[Pipeline] Boundary download failed (non-fatal): {be}")
 
+        _pipeline_status.progress = 0.07
+        _pipeline_status.message = "Backfilling historical AIS data..."
+        _pipeline_status.current_stage = "AIS Ingestion"
+        await broadcast_status()
+        try:
+            async with async_session() as db:
+                await download_and_ingest_ais(image_names, db)
+        except Exception as ae:
+            print(f"[Pipeline] AIS backfill failed (non-fatal): {ae}")
+
         _pipeline_status.progress = 0.1
         _pipeline_status.message = "Downloading landmask..."
         _pipeline_status.current_stage = "Landmask Initialization"
@@ -315,76 +325,61 @@ async def _run_pipeline_task(image_names: list[str]):
         _pipeline_status.current_stage = "Initialization"
         await broadcast_status()
 
-        # Download images
-        _pipeline_status.message = (
-            f"Downloading imagery ({(len(image_names))} requested)..."
-        )
-        _pipeline_status.progress = 0.25
-        _pipeline_status.current_stage = "Image Download"
-        await broadcast_status()
-
-        ok, msg = check_resources(
-            min_disk_gb=1.5
-        )  # Need several GBs for ZIP + extracted
-        if not ok:
-            raise RuntimeError(f"Insufficient disk space to download imagery: {msg}")
-
-        downloaded_folders = await download_images(image_names)
-
-        # Abort if we failed to download ANY images (likely due to disk space or network)
-        if not downloaded_folders and image_names:
-            raise RuntimeError(
-                "Failed to download or extract any images. Check disk space and CDSE credentials."
-            )
-
-        # Filter image_names to only include successfully downloaded ones
-        actual_images = [os.path.basename(f) for f in downloaded_folders]
-        if not actual_images:
-            raise RuntimeError("No images were successfully downloaded for processing.")
-
-        # Check resources before heavy inference
-        ok, msg = check_resources(min_disk_gb=1.0)
-        if not ok:
-            raise RuntimeError(f"Insufficient disk space before inference: {msg}")
-
-        _pipeline_status.current_stage = "Vessel Detection"
-        _pipeline_status.message = (
-            f"Sending {len(actual_images)} images to inference server..."
-        )
-        await broadcast_status()
-
         # Step 2: Per-image processing
-        # Each image gets a portion of the 0.2 to 0.9 range (70% total)
         global _current_base_total, _current_image_weight
-        images_to_process = actual_images
-        _current_image_weight = 0.7 / max(1, len(images_to_process))
+        images_to_process = image_names.copy()
+        _current_image_weight = 0.75 / max(1, len(images_to_process))
 
         for i, image_name in enumerate(images_to_process):
             # Proactive resource check BEFORE each image
-            ok, msg = check_resources(min_disk_gb=1.0)
+            ok, msg = check_resources(min_disk_gb=1.5)
             if not ok:
-                print(
-                    f"[Pipeline] Low disk space detected ({msg}). Triggering emergency cleanup..."
-                )
+                print(f"[Pipeline] Low disk space ({msg}). Triggering cleanup...")
                 async with async_session() as db:
                     await cleanup_uncorrelated_ais(db, preserve_days=1)
 
             _current_base_total = 0.2 + i * _current_image_weight
             _pipeline_status.progress = _current_base_total
-            _pipeline_status.message = (
-                f"Processing image {i + 1}/{len(images_to_process)}: {image_name}"
-            )
             _pipeline_status.current_image = image_name
-
-            if image_name in _pipeline_status.queued_images:
-                _pipeline_status.queued_images.remove(image_name)
-
             _pipeline_status.download_progress = 0.0
             _pipeline_status.inference_progress = 0.0
-            _pipeline_status.current_stage = "Data Ingestion"
+
+            # 1. Download & Extract
+            _pipeline_status.message = (
+                f"Downloading image {i + 1}/{len(images_to_process)}: {image_name}..."
+            )
+            _pipeline_status.current_stage = "Image Download"
+            if image_name in _pipeline_status.queued_images:
+                _pipeline_status.queued_images.remove(image_name)
             await broadcast_status()
 
+            # Callback to update granular progress (called from worker thread)
+            loop = asyncio.get_event_loop()
+
+            def on_dl_progress(pct: float, fname: str):
+                _pipeline_status.download_progress = pct
+                _pipeline_status.message = f"Downloading {fname}: {pct}%"
+                _pipeline_status.progress = _current_base_total + (pct / 100.0) * (
+                    _current_image_weight * 0.4
+                )
+                # Thread-safe broadcast
+                asyncio.run_coroutine_threadsafe(broadcast_status(), loop)
+
             try:
+                # Download single image. returns [folder_path]
+                downloaded = await download_images(
+                    [image_name], progress_callback=on_dl_progress
+                )
+                if not downloaded:
+                    print(f"[Pipeline] Skipping {image_name} (download failed)")
+                    _pipeline_status.failed_images.append(image_name)
+                    continue
+
+                # 2. Inference
+                _pipeline_status.current_stage = "Vessel Detection"
+                _pipeline_status.message = f"Running detection on {image_name}..."
+                await broadcast_status()
+
                 # Start background progress polling
                 stop_polling = asyncio.Event()
                 polling_task = asyncio.create_task(
@@ -396,10 +391,7 @@ async def _run_pipeline_task(image_names: list[str]):
                     async with httpx.AsyncClient(timeout=1200) as client:
                         resp = await client.post(
                             f"{INFERENCE_SERVER_URL}/infer",
-                            json={
-                                "image_name": image_name,
-                                "apply_filters": True,
-                            },
+                            json={"image_name": image_name, "apply_filters": True},
                         )
                         resp.raise_for_status()
                         result = InferenceResponse(**resp.json())
@@ -410,21 +402,20 @@ async def _run_pipeline_task(image_names: list[str]):
                     _pipeline_status.download_progress = 100.0
                     _pipeline_status.inference_progress = 100.0
                     _pipeline_status.progress = (
-                        _current_base_total + _current_image_weight
+                        _current_base_total + _current_image_weight * 0.6
                     )
                     await broadcast_status()
             except Exception as e:
                 print(f"[Pipeline] Failed to process {image_name}: {e}")
-
-                # Emergency Storage Recovery if it looks like a disk issue
-                if "No space left on device" in str(e) or "[Errno 28]" in str(e):
+                if "No space left on device" in str(e) or (
+                    hasattr(e, "errno") and e.errno == 28
+                ):
                     async with async_session() as db:
                         await cleanup_uncorrelated_ais(db, preserve_days=1)
-
                 _pipeline_status.failed_images.append(image_name)
                 _pipeline_status.message = f"Failed to process {image_name}: {str(e)}"
                 await broadcast_status()
-                continue  # Skip to next image
+                continue
 
             # Store Detections
             if detections:
@@ -574,6 +565,11 @@ async def _run_pipeline_task(image_names: list[str]):
                 db.add(ProcessedImage(image_name=image_name, sensor_type=instrument))
                 await db.commit()
 
+            # Update memory status for UI
+            if image_name not in _pipeline_status.processed_images:
+                _pipeline_status.processed_images.append(image_name)
+            await broadcast_status()
+
         _pipeline_status = PipelineStatus(
             status="completed",
             progress=1.0,
@@ -698,13 +694,23 @@ async def start_background_ingest_polling():
 
             sar_new = [p for p in sar_discovered if p["name"] not in processed_names]
 
+            # Polling search uses broader window (last 6h for freshness)
+            # Remove AOI to be unrestricted
+            limit = 1000  # Max products to fetch per instrument
+            try:
+                sar_discovered, _ = await search_recent_images(
+                    "SAR", days=0.25, limit=limit, aoi=None
+                )
+            except Exception as se:
+                print(f"[Pipeline] SAR search error: {se}", flush=True)
+                sar_discovered = []
+
+            sar_new = [p for p in sar_discovered if p["name"] not in processed_names]
+
             # EO (Sentinel-2)
             try:
                 eo_discovered, _ = await search_recent_images(
-                    instrument="EO",
-                    start_date=s_date,
-                    end_date=e_date,
-                    aoi=US_WATERS_WKT,
+                    "EO", days=0.25, limit=limit, aoi=None
                 )
                 print(
                     f"[Pipeline] Polling: EO search returned {len(eo_discovered)} products.",
@@ -813,7 +819,7 @@ async def start_background_ingest_polling():
                     "[Pipeline] Polling: No new products found. Waiting 10m...",
                     flush=True,
                 )
-                await asyncio.sleep(600)
+                await asyncio.sleep(120)
                 continue
 
         except Exception as e:
@@ -823,5 +829,5 @@ async def start_background_ingest_polling():
             traceback.print_exc()
             await asyncio.sleep(20)  # Error backoff
 
-        print("[Pipeline] Polling loop complete. Sleeping 10m...", flush=True)
-        await asyncio.sleep(600)
+        print("[Pipeline] Polling loop complete. Sleeping 2m...", flush=True)
+        await asyncio.sleep(120)

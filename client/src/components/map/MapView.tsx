@@ -142,7 +142,7 @@ export const MapView = ({
     return (
         <MapContainer
             className="h-full w-full"
-            style={{ background: "oklch(0.18 0.01 250)" }}
+            style={{ background: "oklch(0.18 0.01 240)" }}
             center={[15, 0]}
             zoom={3}
             zoomControl={false}
@@ -156,9 +156,10 @@ export const MapView = ({
             <MapViewListener onUpdate={handleUpdate} />
 
             <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-                attribution="&copy; ESRI"
-                maxZoom={15}
+                className="custom-map-tiles"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                maxZoom={19}
                 noWrap={true}
                 bounds={[[-85, -180], [85, 180]]}
             />
