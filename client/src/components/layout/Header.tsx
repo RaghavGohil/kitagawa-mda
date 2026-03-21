@@ -10,8 +10,8 @@ import { usePipelineStatus } from "@/hooks/useVessels";
 import { Progress } from "@/components/ui/progress";
 
 const STAGE_LABELS: Record<string, string> = {
-    "Data Ingestion": "Downloading",
-    "Vessel Detection": "Analyzing",
+    "Image Download": "Downloading",
+    "Analysing Image": "Analyzing",
     "Saving Detections": "Saving Results",
     "Landmask Initialization": "Preparing",
     "AIS Data Sync": "Syncing AIS",
@@ -40,8 +40,8 @@ export const Header = ({ isMobile }: HeaderProps) => {
     const getStageProgress = useCallback((): number => {
         if (!status) return 0;
         const stage = status.current_stage;
-        if (stage === "Data Ingestion") return status.download_progress || 0;
-        if (stage === "Vessel Detection") return status.inference_progress || 0;
+        if (stage === "Image Download" || stage === "Data Ingestion") return status.download_progress || 0;
+        if (stage === "Analysing Image" || stage === "Vessel Detection") return status.inference_progress || 0;
         if (stage === "AIS Correlation") return status.correlation_progress || 0;
         if (stage === "Generating Map Chips" || stage === "Thumbnail Generation") return status.chips_progress || 0;
         return 0;

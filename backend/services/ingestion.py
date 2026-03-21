@@ -351,10 +351,12 @@ async def download_and_ingest_ais(
             print(
                 f"[Ingestion] skipping NOAA AIS fetch for {year} (likely no coverage or too recent): {e}"
             )
-            # Mark ALL dates for this year as no-coverage
-            for d_tuple in year_dates:
-                # d_tuple is (date_str, csv_name)
-                await _record_ais_coverage(db, d_tuple[0], has_coverage=False)
+            # Mark ALL dates for this year as no-coverage UNLESS it's the current year
+            # (where we might have live data instead of NOAA files)
+            current_year = datetime.now().year
+            if str(year) != str(current_year):
+                for d_tuple in year_dates:
+                    await _record_ais_coverage(db, d_tuple[0], has_coverage=False)
             continue
 
         for d_tuple in year_dates:
@@ -498,7 +500,9 @@ async def download_and_ingest_ais(
                     await _record_ais_coverage(db, date_fmt, has_coverage=(count > 0))
                 except Exception as e:
                     print(f"[Ingestion] Failed to insert {csv_path}: {e}")
-                    await _record_ais_coverage(db, date_fmt, has_coverage=False)
+                    # Only mark as no coverage if we are sure (e.g. not a transient DB error)
+                    if "No space left on device" in str(e):
+                        await _record_ais_coverage(db, date_fmt, has_coverage=False)
                     continue
             else:
                 print(

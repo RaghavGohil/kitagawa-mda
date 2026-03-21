@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -48,7 +49,9 @@ class _AISStreamState:
         self.total_inserted: int = 0
         self.last_message_time: Optional[datetime] = None
         self.errors: int = 0
+        self._last_errors: list[str] = []
         self.started_at: Optional[datetime] = None
+        self.current_bboxes: Optional[list] = None  # Current active subscription
 
     def status(self) -> dict:
         return {
@@ -62,6 +65,7 @@ class _AISStreamState:
             ),
             "started_at": (self.started_at.isoformat() if self.started_at else None),
             "api_key_set": bool(AISSTREAM_API_KEY),
+            "recent_errors": self._last_errors,
         }
 
 
@@ -135,11 +139,18 @@ async def _stream_loop():
 
 async def _connect_and_ingest():
     """Single connection session: subscribe + ingest loop."""
-    # Parse bounding boxes from config
-    try:
-        bboxes = json.loads(AISSTREAM_BBOX)
-    except (json.JSONDecodeError, TypeError):
-        bboxes = [[[-90, -180], [90, 180]]]
+    # Use state-managed bboxes if set, else fall back to config/global
+    # Strategy: If a specific focus is set, use ONLY that to save bandwidth.
+    # Otherwise, fall back to the global configuration.
+    if _state.current_bboxes:
+        bboxes = _state.current_bboxes
+    else:
+        try:
+            bboxes = json.loads(AISSTREAM_BBOX)
+        except (json.JSONDecodeError, TypeError):
+            bboxes = [[[-90, -180], [90, 180]]]
+
+    _state.current_bboxes = bboxes
 
     async with websockets.connect(WS_URL, ping_interval=30, ping_timeout=10) as ws:
         # Send subscription within 3 seconds (API requirement)
@@ -169,8 +180,12 @@ async def _connect_and_ingest():
 
             # Handle errors from the server
             if "error" in msg:
-                print(f"[AISStream] Server error: {msg['error']}")
+                err_text = str(msg["error"])
+                print(f"[AISStream] Server error: {err_text}")
                 _state.errors += 1
+                _state._last_errors.append(err_text)
+                if len(_state._last_errors) > 5:
+                    _state._last_errors.pop(0)
                 continue
 
             _state.total_messages += 1
@@ -188,18 +203,42 @@ async def _connect_and_ingest():
 
                 # Extract timestamp — use metadata time_utc or fall back to now
                 ts_str = meta.get("time_utc", "")
-                try:
-                    # Format: "2022-12-29 18:22:32.318353 +0000 UTC"
-                    ts = datetime.strptime(
-                        ts_str.rsplit(" UTC", 1)[0].strip(), "%Y-%m-%d %H:%M:%S.%f %z"
-                    )
-                except (ValueError, IndexError):
+                ts = None
+                if ts_str:
                     try:
-                        ts = datetime.strptime(
-                            ts_str.rsplit(" UTC", 1)[0].strip(), "%Y-%m-%d %H:%M:%S %z"
+                        # Format: "2022-12-29 18:22:32.318353123 +0000 UTC"
+                        # Truncate nanoseconds to microseconds for strptime (%f only handles 6 digits)
+                        # We look for the decimal point and the space before the offset
+                        match = re.search(
+                            r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.(\d+)\s+(\+\d{4})",
+                            ts_str,
                         )
-                    except (ValueError, IndexError):
-                        ts = datetime.now(timezone.utc)
+                        if match:
+                            base, frac, offset = match.groups()
+                            # Truncate frac to 6 digits
+                            ts = datetime.strptime(
+                                f"{base}.{frac[:6]} {offset}", "%Y-%m-%d %H:%M:%S.%f %z"
+                            )
+                        else:
+                            # Try without fractional seconds
+                            match_no_frac = re.search(
+                                r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\+\d{4})",
+                                ts_str,
+                            )
+                            if match_no_frac:
+                                base, offset = match_no_frac.groups()
+                                ts = datetime.strptime(
+                                    f"{base} {offset}", "%Y-%m-%d %H:%M:%S %z"
+                                )
+                    except Exception as e:
+                        err_msg = f"Timestamp parse error for '{ts_str}': {e}"
+                        print(f"[AISStream] {err_msg}")
+                        _state._last_errors.append(err_msg)
+                        if len(_state._last_errors) > 5:
+                            _state._last_errors.pop(0)
+
+                if ts is None:
+                    ts = datetime.now(timezone.utc)
 
                 lat = pos.get("Latitude", meta.get("latitude"))
                 lon = pos.get("Longitude", meta.get("longitude"))
@@ -255,6 +294,10 @@ async def _connect_and_ingest():
                     f"[AISStream] Stats: {_state.total_messages} msgs received, "
                     f"{_state.total_inserted} inserted, {_state.errors} errors"
                 )
+                if _state._last_errors:
+                    print(
+                        f"[AISStream] Recent errors: {'; '.join(_state._last_errors[-3:])}"
+                    )
                 last_stats = now
 
         # Flush remaining
@@ -309,3 +352,27 @@ async def _flush_to_db(
     except Exception as e:
         _state.errors += 1
         print(f"[AISStream] DB flush error: {e}")
+
+
+async def set_active_bboxes(bboxes: list):
+    """
+    Update the AIS subscription to a new set of bounding boxes.
+    Triggers a reconnect to apply changes.
+    """
+    if _state.current_bboxes == bboxes:
+        return
+
+    print(f"[AISStream] Updating subscription bboxes to: {bboxes}")
+    _state.current_bboxes = bboxes
+
+    # If already running, we need to reconnect to apply the new subscription
+    if _state.running and _state.connected:
+        print("[AISStream] Reconnecting to apply new subscription...")
+        # We don't stop the task, just set a flag or cancel/restart?
+        # Simplest: cancel the current task and the loop will restart it
+        if _state.task and not _state.task.done():
+            _state.task.cancel()
+            # The _stream_loop will catch CancelledError and potentially exit,
+            # so we ensure it stays 'running' so it restarts.
+            _state.running = True
+            _state.task = asyncio.create_task(_stream_loop())

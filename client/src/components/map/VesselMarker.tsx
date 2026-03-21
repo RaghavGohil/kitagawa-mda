@@ -73,7 +73,7 @@ export const VesselMarker = ({
     });
 
     // Track
-    const isCorrelated = vessel.mmsi && vessel.mmsi.trim() !== "";
+    const isCorrelated = vessel.mmsi && String(vessel.mmsi).trim() !== "";
     const shouldShowTrack = isCorrelated && (showTrack || isSelected);
     const trackPositions: [number, number][] = vessel.track.map(p => [p.lat, p.lng]);
 

@@ -33,6 +33,7 @@ from backend.db.connection import close_db, init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import socket
+
     try:
         print("[DEBUG] Resolving postgres:", socket.gethostbyname("postgres"))
     except Exception as e:
@@ -81,7 +82,11 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://kitagawamda.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

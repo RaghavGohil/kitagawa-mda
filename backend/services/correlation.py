@@ -9,33 +9,35 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ProcessPoolExecutor
-from typing import Optional
+from typing import Optional, Callable, Awaitable
 
 import numpy as np
 import pandas as pd
 from pyproj import Geod
-from scipy.interpolate import CubicHermiteSpline, interp1d
+from scipy.interpolate import CubicHermiteSpline
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-INTERP_SECONDS = 120           # 2-minute interpolation step
-TIME_TOLERANCE_MINUTES = 5
-LOCATION_TOLERANCE_METERS = 500
+INTERP_SECONDS = 120  # 2-minute interpolation step
+TIME_TOLERANCE_MINUTES = 10
+LOCATION_TOLERANCE_METERS = 1200
 BATCH_TRACKS = 200
 MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 geod = Geod(ellps="WGS84")
 
 
-from typing import Optional, Callable, Awaitable
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable[[float], Awaitable[None]]] = None) -> int:
+async def run_correlation(
+    db: AsyncSession,
+    image_name: Optional[str] = None,
+    progress_callback: Optional[Callable[[float], Awaitable[None]]] = None,
+) -> int:
     """
     Run AIS-detection correlation.
     Reads detections and AIS tracks from PostGIS, matches them, and updates
@@ -43,16 +45,21 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
 
     Returns the number of detections correlated.
     """
-    # 1. Load all uncorrelated detections
-    result = await db.execute(
-        text("""
-            SELECT id, ST_Y(geom) AS lat, ST_X(geom) AS lon,
-                   detection_datetime
-            FROM detections
-            WHERE mmsi IS NULL AND detection_datetime IS NOT NULL
-            ORDER BY detection_datetime
-        """)
-    )
+    # 1. Load all uncorrelated detections (optionally filtered by image)
+    query = """
+        SELECT id, ST_Y(geom) AS lat, ST_X(geom) AS lon,
+               detection_datetime
+        FROM detections
+        WHERE mmsi IS NULL AND detection_datetime IS NOT NULL
+    """
+    params = {}
+    if image_name:
+        query += " AND image_name = :image_name "
+        params["image_name"] = image_name
+
+    query += " ORDER BY detection_datetime"
+
+    result = await db.execute(text(query), params)
     det_rows = result.fetchall()
     if not det_rows:
         print("[Correlation] No uncorrelated detections found.")
@@ -62,7 +69,9 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
     det_lats = np.array([r[1] for r in det_rows], dtype=np.float64)
     det_lons = np.array([r[2] for r in det_rows], dtype=np.float64)
     det_times = pd.to_datetime([r[3] for r in det_rows], utc=True)
-    det_times_s = det_times.values.astype("datetime64[ns]").astype(np.int64) // 1_000_000_000
+    det_times_s = (
+        det_times.values.astype("datetime64[ns]").astype(np.int64) // 1_000_000_000
+    )
     best_dist = np.full(len(det_ids), np.inf, dtype=np.float64)
     best_mmsi = np.zeros(len(det_ids), dtype=np.int64)
 
@@ -82,7 +91,7 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
         day_lats = det_lats[day_mask]
         day_lons = det_lons[day_mask]
         day_times = det_times[day_mask]
-        
+
         time_min = day_times.min() - time_tol
         time_max = day_times.max() + time_tol
 
@@ -101,9 +110,12 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
                 ORDER BY mmsi, timestamp
             """),
             {
-                "tmin": time_min.to_pydatetime(), "tmax": time_max.to_pydatetime(),
-                "lat_min": lat_min, "lat_max": lat_max,
-                "lon_min": lon_min, "lon_max": lon_max,
+                "tmin": time_min.to_pydatetime(),
+                "tmax": time_max.to_pydatetime(),
+                "lat_min": lat_min,
+                "lat_max": lat_max,
+                "lon_min": lon_min,
+                "lon_max": lon_max,
             },
         )
         ais_rows = ais_result.fetchall()
@@ -113,7 +125,8 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
 
         # Group by MMSI
         ais_df = pd.DataFrame(
-            ais_rows, columns=["mmsi", "base_date_time", "latitude", "longitude", "sog", "cog"]
+            ais_rows,
+            columns=["mmsi", "base_date_time", "latitude", "longitude", "sog", "cog"],
         )
         ais_df["base_date_time"] = pd.to_datetime(ais_df["base_date_time"], utc=True)
 
@@ -143,12 +156,28 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
                 continue
 
             valid_interp = [r for r in interp_results if r is not None and len(r) > 0]
-            print(f"[Correlation] Batch {bstart//BATCH_TRACKS}: {len(valid_interp)}/{len(batch)} tracks interpolated")
-            
+            print(
+                f"[Correlation] Batch {bstart // BATCH_TRACKS}: {len(valid_interp)}/{len(batch)} tracks interpolated"
+            )
+
+            # Diagnostic for first track in first batch
+            if bstart == 0 and valid_interp:
+                sample_track = valid_interp[0]
+                sample_t0 = sample_track["base_date_time"].min()
+                sample_tn = sample_track["base_date_time"].max()
+                print(
+                    f"[Correlation] Sample AIS Window: {sample_t0} -> {sample_tn} (UTC)"
+                )
+                if len(day_times) > 0:
+                    # DatetimeIndex doesn't have .iloc
+                    print(f"[Correlation] Sample Det Time: {day_times[0]} (UTC)")
+
             if progress_callback:
-                progress_pct = min(90.0, ((bstart + BATCH_TRACKS) / max(1, len(mmsi_groups))) * 90.0)
+                progress_pct = min(
+                    90.0, ((bstart + BATCH_TRACKS) / max(1, len(mmsi_groups))) * 90.0
+                )
                 await progress_callback(progress_pct)
-            
+
             if not valid_interp:
                 continue
             d_lats = det_lats[day_idx]
@@ -159,9 +188,14 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
             sub_mmsi = best_mmsi[day_idx].copy()
 
             sub_dist, sub_mmsi = _match_batch(
-                interp_results, d_lats, d_lons, d_times,
-                time_tol_s, LOCATION_TOLERANCE_METERS,
-                sub_dist, sub_mmsi,
+                interp_results,
+                d_lats,
+                d_lons,
+                d_times,
+                time_tol_s,
+                LOCATION_TOLERANCE_METERS,
+                sub_dist,
+                sub_mmsi,
             )
 
             best_dist[day_idx] = sub_dist
@@ -169,13 +203,13 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
 
     # 6. Update detections in PostGIS with identity AND unique names
     from shared.naming import get_unidentified_name
-    
+
     correlated = 0
     for i in range(len(det_ids)):
         mmsi = int(best_mmsi[i])
         dist = float(best_dist[i])
         det_id = int(det_ids[i])
-        
+
         if mmsi != 0:
             await db.execute(
                 text("""
@@ -204,7 +238,7 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
                     SET custom_name = :name
                     WHERE id = :det_id
                 """),
-                {"name": u_name, "det_id": det_id}
+                {"name": u_name, "det_id": det_id},
             )
 
         if progress_callback and i % 50 == 0:
@@ -213,10 +247,10 @@ async def run_correlation(db: AsyncSession, progress_callback: Optional[Callable
 
     await db.commit()
     print(f"[Correlation] Correlated {correlated}/{len(det_ids)} detections.")
-    
+
     if progress_callback:
         await progress_callback(100.0)
-        
+
     return correlated
 
 
@@ -240,12 +274,14 @@ def _interpolate_track_physics(
         return pd.DataFrame()
 
     df = track_df.sort_values("base_date_time").reset_index(drop=True).copy()
-    
+
     # Ensure columns exist
     if "latitude" in df.columns and "lat" not in df.columns:
         df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
-    
-    df["base_date_time"] = pd.to_datetime(df["base_date_time"], utc=True, errors="coerce")
+
+    df["base_date_time"] = pd.to_datetime(
+        df["base_date_time"], utc=True, errors="coerce"
+    )
     df = df.dropna(subset=["base_date_time", "lat", "lon"])
     if len(df) < 2:
         return pd.DataFrame()
@@ -327,8 +363,14 @@ def _meters_to_deg_lon(m, lat_deg):
 
 
 def _match_batch(
-    interp_tracks, det_lats, det_lons, det_times_s,
-    time_tol_s, loc_tol_m, current_best_dist, current_best_mmsi,
+    interp_tracks,
+    det_lats,
+    det_lons,
+    det_times_s,
+    time_tol_s,
+    loc_tol_m,
+    current_best_dist,
+    current_best_mmsi,
 ):
     deg_lat_rad = _meters_to_deg_lat(loc_tol_m)
 
@@ -385,8 +427,31 @@ def _match_batch(
             )
             local_min = int(np.argmin(dists))
             local_min_dist = float(dists[local_min])
+
+            # Pass 1: Strict Match (Confidence)
             if local_min_dist <= loc_tol_m and local_min_dist < current_best_dist[di]:
                 current_best_dist[di] = local_min_dist
                 current_best_mmsi[di] = mmsi
+
+            # Pass 2: Fallback Broad Match (Proximity)
+            # If we don't have a strict match yet, but this is within 5km and is currently the best
+            elif (
+                current_best_dist[di] > loc_tol_m
+                and local_min_dist < 5000
+                and local_min_dist < current_best_dist[di]
+            ):
+                current_best_dist[di] = local_min_dist
+                current_best_mmsi[di] = mmsi
+                if di % 100 == 0:
+                    print(
+                        f"[Correlation] Proximity Match: Det {di} -> MMSI {mmsi} ({local_min_dist:.1f}m)"
+                    )
+
+            elif local_min_dist < 10000 and local_min_dist < current_best_dist[di]:
+                # Log near misses for debugging if under 10km
+                if di % 100 == 0:
+                    print(
+                        f"[Correlation] NEAR MISS: Det {di} is {local_min_dist:.1f}m from MMSI {mmsi}"
+                    )
 
     return current_best_dist, current_best_mmsi

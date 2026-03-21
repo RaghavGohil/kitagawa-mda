@@ -208,7 +208,7 @@ async def _poll_inference_progress(stop_event: asyncio.Event):
 
                     # Categorize based on message
                     if "Download" in msg or "Extraction" in msg or "Starting" in msg:
-                        _pipeline_status.current_stage = "Data Ingestion"
+                        _pipeline_status.current_stage = "Image Download"
                         _pipeline_status.download_progress = current_pct
                         _pipeline_status.inference_progress = 0.0
                         # Update overall: Download is first 50% of this image's weight
@@ -217,7 +217,7 @@ async def _poll_inference_progress(stop_event: asyncio.Event):
                         )
                         _pipeline_status.progress = _current_base_total + overall_sub
                     else:
-                        _pipeline_status.current_stage = "Vessel Detection"
+                        _pipeline_status.current_stage = "Analysing Image"
                         _pipeline_status.download_progress = 100.0
                         _pipeline_status.inference_progress = current_pct
                         # Update overall: Inference is second 50% of this image's weight
@@ -260,6 +260,7 @@ async def _run_pipeline_task(image_names: list[str]):
     from backend.services.boundaries import ensure_local_boundaries
     from backend.services.chips import generate_and_upload_chips
     from backend.services.correlation import run_correlation
+    from backend.services.ais_stream import set_active_bboxes
 
     _pipeline_status.status = "running"
     _pipeline_status.message = "Initializing pipeline..."
@@ -376,8 +377,9 @@ async def _run_pipeline_task(image_names: list[str]):
                     continue
 
                 # 2. Inference
-                _pipeline_status.current_stage = "Vessel Detection"
-                _pipeline_status.message = f"Running detection on {image_name}..."
+                folder_path = downloaded[0]
+                _pipeline_status.current_stage = "Analysing Image"
+                _pipeline_status.message = f"Analyzing {image_name} for vessels..."
                 await broadcast_status()
 
                 # Start background progress polling
@@ -391,11 +393,38 @@ async def _run_pipeline_task(image_names: list[str]):
                     async with httpx.AsyncClient(timeout=1200) as client:
                         resp = await client.post(
                             f"{INFERENCE_SERVER_URL}/infer",
-                            json={"image_name": image_name, "apply_filters": True},
+                            json={
+                                "image_folder_path": folder_path,
+                                "apply_filters": True,
+                            },
                         )
                         resp.raise_for_status()
                         result = InferenceResponse(**resp.json())
                         detections = result.detections
+                    await broadcast_status()
+
+                    # Auto-Focus AIS stream if we have detections
+                    if detections:
+                        try:
+                            lats = [
+                                d.vessel_latitude
+                                for d in detections
+                                if d.vessel_latitude is not None
+                            ]
+                            lons = [
+                                d.vessel_longitude
+                                for d in detections
+                                if d.vessel_longitude is not None
+                            ]
+                            if lats and lons:
+                                # Create a bbox with a small buffer (e.g. 0.2 deg ~ 20km)
+                                bbox = [
+                                    [min(lats) - 0.2, min(lons) - 0.2],
+                                    [max(lats) + 0.2, max(lons) + 0.2],
+                                ]
+                                await set_active_bboxes([bbox])
+                        except Exception as focus_err:
+                            print(f"[Pipeline] AIS Auto-Focus error: {focus_err}")
                 finally:
                     stop_polling.set()
                     await polling_task
@@ -550,7 +579,11 @@ async def _run_pipeline_task(image_names: list[str]):
                 await broadcast_status()
 
             async with async_session() as db:
-                await run_correlation(db, progress_callback=_local_correlation_progress)
+                await run_correlation(
+                    db,
+                    image_name=image_name,
+                    progress_callback=_local_correlation_progress,
+                )
             await broadcast_status()  # STREAMING UPDATE
 
             _pipeline_status.progress = (
@@ -564,6 +597,12 @@ async def _run_pipeline_task(image_names: list[str]):
                 instrument = "SAR" if "S1" in image_name else "EO"
                 db.add(ProcessedImage(image_name=image_name, sensor_type=instrument))
                 await db.commit()
+
+            # Return AIS stream to global subscription (clear focus)
+            try:
+                await set_active_bboxes(None)
+            except Exception as e:
+                print(f"[Pipeline] AIS focus reset error: {e}")
 
             # Update memory status for UI
             if image_name not in _pipeline_status.processed_images:
@@ -735,6 +774,16 @@ async def start_background_ingest_polling():
                 print(
                     f"  - New EO samples: {[p['name'] for p in eo_new[:3]]}", flush=True
                 )
+
+            # 2. Filter out already processed images
+            async with async_session() as db:
+                processed_result = await db.execute(
+                    text("SELECT image_name FROM processed_images")
+                )
+                processed_names = {row[0] for row in processed_result.fetchall()}
+
+            sar_new = [p for p in sar_new if p["name"] not in processed_names]
+            eo_new = [p for p in eo_new if p["name"] not in processed_names]
 
             s1a_batch = [
                 p
