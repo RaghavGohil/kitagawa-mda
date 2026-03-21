@@ -192,7 +192,7 @@ export default function DashboardPage() {
               isMobile ? "z-[120] w-full" : "z-20 w-[360px]",
             )}>
               <div className="sticky top-0 z-10 flex justify-between items-center px-5 py-4 bg-background border-b border-border">
-                <span className="text-sm font-semibold truncate uppercase tracking-tight">{selectedVessel.name}</span>
+                <span className="text-sm font-semibold truncate uppercase tracking-tight">Vessel Info</span>
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setSelectedVesselId(null)}>
                   <X className="h-4 w-4" />
                 </Button>

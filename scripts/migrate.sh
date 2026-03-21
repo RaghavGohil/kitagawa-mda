@@ -17,8 +17,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Alembic needs to run from the backend_server directory
-ALEMBIC_DIR="$PROJECT_ROOT/backend_server"
+# Alembic needs to run from the backend directory
+ALEMBIC_DIR="$PROJECT_ROOT/backend"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 cd "$ALEMBIC_DIR"
@@ -28,7 +28,7 @@ case "${1:-help}" in
         MSG="${2:?Usage: $0 generate \"migration description\"}"
         echo "[migrate] Generating migration: $MSG"
         alembic revision --autogenerate -m "$MSG"
-        echo "[migrate] Done. Check backend_server/alembic/versions/ for the new file."
+        echo "[migrate] Done. Check backend/alembic/versions/ for the new file."
         ;;
     upgrade|up)
         TARGET="${2:-head}"
