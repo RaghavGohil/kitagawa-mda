@@ -24,6 +24,7 @@ class SensorType(str, Enum):
 # ---------------------------------------------------------------------------
 class Detection(BaseModel):
     """A single vessel detection produced by the inference server."""
+
     image_name: str
     sensor_type: SensorType
     xmin: float
@@ -39,12 +40,23 @@ class Detection(BaseModel):
     image_capture_start_datetime: Optional[str] = None
     image_capture_end_datetime: Optional[str] = None
 
+    # ── Scoring fields (populated by inference/scoring/) ──────────
+    # Calibrated probability via temperature scaling (no labels required)
+    calibrated_confidence: float = 0.0
+    # Context adjustment from SituationScorer (-0.3 to +0.3)
+    situation_score: float = 0.0
+    # Fused final ranking score = clip(calibrated + situation, 0, 1)
+    final_score: Optional[float] = None
+    # Human-readable reasons this detection was near-filtered (transparency)
+    fp_flags: list[str] = Field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Inference request / response
 # ---------------------------------------------------------------------------
 class InferenceRequest(BaseModel):
     """Request payload sent to the inference server."""
+
     sensor_type: Optional[SensorType] = None  # auto-detect if None
     image_name: Optional[str] = Field(
         None, description="Optional Copernicus product name to download and process"
@@ -59,6 +71,7 @@ class InferenceRequest(BaseModel):
 
 class InferenceResponse(BaseModel):
     """Response payload from the inference server."""
+
     detections: list[Detection]
     total_count: int
     sensor_type: SensorType
@@ -70,6 +83,7 @@ class InferenceResponse(BaseModel):
 # ---------------------------------------------------------------------------
 class AISTrackPoint(BaseModel):
     """A single AIS position report."""
+
     mmsi: int
     timestamp: datetime
     latitude: float
@@ -80,6 +94,7 @@ class AISTrackPoint(BaseModel):
 
 class VesselCorrelation(BaseModel):
     """A detection correlated with an AIS vessel."""
+
     detection_id: int
     mmsi: int
     distance_meters: float
@@ -93,6 +108,7 @@ class VesselCorrelation(BaseModel):
 # ---------------------------------------------------------------------------
 class DetectionGeoJSON(BaseModel):
     """GeoJSON-compatible detection for Leaflet."""
+
     type: str = "Feature"
     geometry: dict
     properties: dict
@@ -100,6 +116,7 @@ class DetectionGeoJSON(BaseModel):
 
 class DetectionCluster(BaseModel):
     """Clustered detections for low zoom levels."""
+
     center_lat: float
     center_lon: float
     count: int
@@ -108,15 +125,16 @@ class DetectionCluster(BaseModel):
 
 class PipelineStatus(BaseModel):
     """Pipeline execution status."""
+
     status: str  # "idle", "running", "completed", "failed"
     progress: float = 0.0  # 0.0 - 1.0 (Total Progress)
-    
+
     # Granular stage progress (0.0 - 100.0)
     download_progress: float = 0.0
     inference_progress: float = 0.0
     correlation_progress: float = 0.0
     chips_progress: float = 0.0
-    
+
     message: str = ""
     current_stage: str = ""  # e.g., "Downloading", "Inferring"
     started_at: Optional[datetime] = None

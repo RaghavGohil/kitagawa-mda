@@ -4,8 +4,8 @@ Maritime surveillance system using YOLO vessel detection on SAR/EO satellite ima
 
 ## Project Structure
 
-- `backend_server/`: FastAPI server for data ingestion, correlation, and frontend API.
-- `inference_server/`: GPU-enabled FastAPI server for running YOLO inference.
+- `backend/`: FastAPI server for data ingestion, correlation, and frontend API.
+- `inference/`: GPU-enabled FastAPI server for running YOLO inference.
 - `client/`: React + Vite frontend for map visualization.
 - `shared/`: Shared Python schemas and configuration.
 - `data/`: Local directory for satellite imagery and database storage.
@@ -13,7 +13,7 @@ Maritime surveillance system using YOLO vessel detection on SAR/EO satellite ima
 ## Prerequisites
 
 - **Docker & Docker Compose**: Recommended for running the full stack.
-- **NVIDIA Container Toolkit**: Required for `inference-server` GPU acceleration.
+- **NVIDIA Container Toolkit**: Required for `inference` GPU acceleration.
 - **Node.js 20+**: If running the client locally.
 - **Python 3.10+**: If running servers locally.
 
@@ -50,15 +50,15 @@ docker-compose up -d postgres minio
 
 ### 2. Backend Server
 ```bash
-cd backend_server
+cd backend
 pip install -r requirements.txt
 python main.py
 ```
 
 ### 3. Inference Server
 ```bash
-cd inference_server
-# Ensure you have models in inference_server/models/
+cd inference
+# Ensure you have models in inference/models/
 pip install -r requirements.txt
 python main.py
 ```

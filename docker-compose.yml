@@ -2,16 +2,16 @@ services:
   # -------------------------------------------------------------------
   # Inference Server (GPU) — YOLO vessel detection
   # -------------------------------------------------------------------
-  inference-server:
+  inference:
     build:
       context: .
-      dockerfile: inference_server/Dockerfile
+      dockerfile: inference/Dockerfile
     container_name: kitagawa-inference
     ports:
       - "8001:8001"
     volumes:
-      - transient_data:/data
-      - ./inference_server:/app/inference_server
+      - ./.docker_data/transient_data:/data
+      - ./inference:/app/inference
       - ./shared:/app/shared
     deploy:
       resources:
@@ -36,23 +36,23 @@ services:
   # -------------------------------------------------------------------
   # Backend Server — API for frontend, data processing
   # -------------------------------------------------------------------
-  backend-server:
+  backend:
     build:
       context: .
-      dockerfile: backend_server/Dockerfile
+      dockerfile: backend/Dockerfile
     container_name: kitagawa-backend
     ports:
       - "8000:8000"
     volumes:
-      - transient_data:/data
-      - ./backend_server:/app/backend_server
+      - ./.docker_data/transient_data:/data
+      - ./backend:/app/backend
       - ./shared:/app/shared
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_started
-      inference-server:
+      inference:
         condition: service_healthy
     environment:
       - DATA_DIR=/data
@@ -65,7 +65,7 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       - MINIO_BUCKET=kitagawa-chips
-      - INFERENCE_SERVER_URL=http://inference-server:8001
+      - INFERENCE_SERVER_URL=http://inference:8001
       - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
       - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
       - AISSTREAM_API_KEY=${AISSTREAM_API_KEY:-}
@@ -87,7 +87,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./.docker_data/pgdata:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=kitagawa
       - POSTGRES_USER=kitagawa
@@ -110,7 +110,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - ./.docker_data/minio_data:/data
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -128,13 +128,10 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      backend-server:
+      backend:
         condition: service_healthy
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     restart: unless-stopped
 
-volumes:
-  pgdata:
-  minio_data:
-  transient_data:
+# Volumes section removed — using bind mounts to ./ .docker_data instead

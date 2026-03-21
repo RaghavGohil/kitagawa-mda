@@ -2,3 +2,4 @@
 data/
 !client/src/data/
 .env
+.docker_data

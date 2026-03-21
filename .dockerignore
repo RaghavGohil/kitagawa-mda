@@ -7,12 +7,12 @@ venv
 .env
 .git
 .gitignore
+.github/
 .dockerignore
-data/
-inference/
 client/node_modules/
 dist/
 build/
 .vscode/
 .idea/
 *.log
+.docker_data/
