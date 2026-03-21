@@ -79,17 +79,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend
+# CORS for frontend (Permissive for localtunnel/vercel demonstration)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://kitagawamda.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "bypass-tunnel-reminder"],
 )
 
 # Register routers
