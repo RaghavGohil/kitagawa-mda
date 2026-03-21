@@ -110,7 +110,7 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
                 <>
                     <Separator />
                     <div className="p-5">
-                        <p className="text-xs text-muted-foreground">Source: <span className="font-mono">{vessel.imageName}</span></p>
+                        <p className="text-xs text-muted-foreground break-all">Source: <span className="font-mono">{vessel.imageName}</span></p>
                     </div>
                 </>
             )}

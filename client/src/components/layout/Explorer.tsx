@@ -38,7 +38,7 @@ export const Explorer = ({
             {!open && (
                 <button
                     onClick={onToggle}
-                    className="absolute z-101 flex items-center justify-center bg-background border-border border-r border-b hover:bg-muted transition-all h-20 w-8 rounded-none rounded-br-md left-0 top-0 active:translate-y-px duration-200"
+                    className="absolute z-101 flex items-center justify-center bg-background border-border border-r border-b hover:bg-muted h-20 w-8 rounded-none rounded-br-md left-0 top-0 active:translate-y-px"
                     aria-label="Open Navigation"
                 >
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />

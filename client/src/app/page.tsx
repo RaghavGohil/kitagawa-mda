@@ -121,14 +121,14 @@ export default function DashboardPage() {
     : null;
 
   return (
-    <div className="h-[100dvh] w-full overflow-hidden bg-background flex flex-col">
+    <div className="h-[100dvh] w-full overflow-hidden bg-background flex flex-col" data-vessel-panel-open={!!selectedVesselId}>
       <Header />
 
       <main className="relative flex-1 w-full overflow-hidden flex flex-row">
         {/* =================== MAP AREA =================== */}
         <div className="relative flex-1 h-full min-w-0 overflow-hidden">
           {/* =================== MAP =================== */}
-          <div className="absolute inset-0 z-0">
+          <div className="absolute inset-0 z-0 text-leaflet-nudge">
             <MapView
               vessels={timeFilteredVessels}
               selectedVessel={selectedVessel}
@@ -188,8 +188,8 @@ export default function DashboardPage() {
           {/* =================== VESSEL INFO =================== */}
           {selectedVessel && (
             <aside className={cn(
-              "absolute top-0 right-0 h-full border-l border-border bg-background overflow-y-auto shadow-2xl transition-all",
-              isMobile ? "z-50 w-full" : "z-20 w-[360px]",
+              "absolute top-0 right-0 h-full border-l border-border bg-background overflow-y-auto shadow-2xl",
+              isMobile ? "z-[120] w-full" : "z-20 w-[360px]",
             )}>
               <div className="sticky top-0 z-10 flex justify-between items-center px-5 py-4 bg-background border-b border-border">
                 <span className="text-sm font-semibold truncate uppercase tracking-tight">{selectedVessel.name}</span>

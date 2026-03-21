@@ -109,9 +109,27 @@
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
-.custom-map-tiles {
-  /* High-contrast 'Soft Darkosm' - Land stays lighter than water */
-  filter: brightness(0.4) contrast(1.3) saturate(0.6);
+/* Dynamic nudge for map controls when the right panel is open */
+[data-vessel-panel-open="true"] .leaflet-right {
+  margin-right: 360px !important;
+}
+
+/* Adjust transition for smooth sliding */
+.leaflet-right {
+  transition: margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+@media (max-width: 1024px) {
+  [data-vessel-panel-open="true"] .leaflet-right {
+    margin-right: 0 !important;
+    /* On mobile, full-screen panel doesn't need nudge */
+  }
+}
+
+.custom-map-tiles img,
+.custom-map-tiles .leaflet-tile {
+  /* Targeted blue tinting on the tiles themselves */
+  filter: sepia(0.4) hue-rotate(190deg) saturate(2.5) brightness(0.7) !important;
 }
 
 .leaflet-control-zoom {
