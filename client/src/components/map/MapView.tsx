@@ -225,6 +225,7 @@ export const MapView = ({
         <MapContainer
             className="h-full w-full"
             style={{ background: "oklch(0.18 0.01 240)" }}
+            preferCanvas={true}
             center={[15, 0]}
             zoom={3}
             zoomControl={false}
