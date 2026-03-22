@@ -259,9 +259,10 @@ export const MapView = ({
             <AISTrackLayer
                 show={showTracks}
                 playbackTime={playbackTime}
+                onVesselSelect={onVesselSelect}
+                selectedMmsi={selectedVessel?.mmsi}
                 correlatedVessels={allEntities
                     .filter(v =>
-                        // Request tracks for both detections and live ships
                         parseInt(v.mmsi) > 0 &&
                         v.position?.lat != null &&
                         v.position?.lng != null
@@ -270,9 +271,8 @@ export const MapView = ({
                         mmsi: parseInt(v.mmsi),
                         lat: v.position.lat,
                         lon: v.position.lng,
-                        // For live ships seen 'now', use playbackTime as focus. 
-                        // For detections, use their original capture time.
                         detectionTime: v.position.timestamp.getTime(),
+                        vessel: v,
                     }))}
             />
 
