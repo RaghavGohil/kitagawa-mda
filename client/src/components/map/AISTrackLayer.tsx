@@ -180,41 +180,31 @@ export const AISTrackLayer = ({
         <>
             {trackVisuals.map((track: any) => (
                 <Fragment key={`track-group-${track.mmsi}`}>
-                    {/* ... (dots/lines) ... */}
-                    {track.points.map((p: any, idx: number) => {
-                        const nextP = track.points[idx + 1];
-                        const distFromCenter = Math.abs(idx - (track.centerIdx ?? 10));
-                        const maxDist = 10;
-                        const fadeFactor = Math.max(0, 1 - (distFromCenter / maxDist));
-                        const fadeOpacity = 0.2 + fadeFactor * 0.7;
+                    <Polyline
+                        positions={track.points.map((p: any) => [p.lat, p.lon])}
+                        pathOptions={{
+                            color: "#34d399",
+                            weight: 1.5,
+                            opacity: 0.4,
+                            interactive: false,
+                        }}
+                    />
 
-                        return (
-                            <Fragment key={`ais-seg-${track.mmsi}-${idx}`}>
-                                <CircleMarker
-                                    center={[p.lat, p.lon]}
-                                    radius={1.5}
-                                    pathOptions={{
-                                        color: "#34d399",
-                                        fillColor: "#34d399",
-                                        fillOpacity: fadeOpacity,
-                                        stroke: false,
-                                        interactive: false,
-                                    }}
-                                />
-                                {nextP && (
-                                    <Polyline
-                                        positions={[[p.lat, p.lon], [nextP.lat, nextP.lon]]}
-                                        pathOptions={{
-                                            color: "#34d399",
-                                            weight: 1.5,
-                                            opacity: fadeOpacity * 0.7,
-                                            interactive: false,
-                                        }}
-                                    />
-                                )}
-                            </Fragment>
-                        );
-                    })}
+                    {/* Render sparse dots for texture - fewer points = better performance */}
+                    {track.points.filter((_: any, i: number) => i % 4 === 0).map((p: any, idx: number) => (
+                        <CircleMarker
+                            key={`ais-dot-${track.mmsi}-${idx}`}
+                            center={[p.lat, p.lon]}
+                            radius={1.2}
+                            pathOptions={{
+                                color: "#34d399",
+                                fillColor: "#34d399",
+                                fillOpacity: 0.5,
+                                stroke: false,
+                                interactive: false,
+                            }}
+                        />
+                    ))}
 
                     {/* Render the actual ship icon at its historical time-travel position */}
                     <Marker
