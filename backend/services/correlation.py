@@ -215,21 +215,19 @@ async def run_correlation(
         dist = float(best_dist[i])
         det_id = int(det_ids[i])
 
-        # Determine classification
-        cls_state = "unidentified"
+        # Determine 3-state classification:
+        #   identified      — matched AIS, distance <= 500m
+        #   anomaly         — detected in area WITH AIS coverage but no match (dark vessel)
+        #   out_of_coverage — detected but no AIS data available for that area/date
         det_date_str = det_times[i].strftime("%Y-%m-%d")
         has_coverage = coverage.get(det_date_str, False)
 
-        if mmsi != 0:
-            if dist <= 500:
-                cls_state = "identified"
-            else:
-                cls_state = "anomaly"  # Identified but suspicious distance
-
+        if mmsi != 0 and dist <= 500:
+            cls_state = "identified"
             await db.execute(
                 text("""
                     UPDATE detections
-                    SET mmsi = :mmsi, 
+                    SET mmsi = :mmsi,
                         correlation_distance_m = :dist,
                         classification = :cls,
                         custom_name = COALESCE(
@@ -238,22 +236,19 @@ async def run_correlation(
                         )
                     WHERE id = :det_id
                 """),
-                {
-                    "mmsi": mmsi,
-                    "dist": dist,
-                    "cls": cls_state,
-                    "det_id": det_id,
-                },
+                {"mmsi": mmsi, "dist": dist, "cls": cls_state, "det_id": det_id},
             )
             correlated += 1
         else:
-            # No MMSI match
+            # mmsi=0 (no match) OR match too far away (ambiguous) → treat as dark vessel if coverage exists
             if has_coverage:
-                cls_state = "unidentified"  # Anomaly: should be there but isn't
+                cls_state = (
+                    "anomaly"  # Dark vessel: in coverage area, no valid AIS signal
+                )
             else:
-                cls_state = "ais_gap"  # Unknown: out of coverage
+                cls_state = "out_of_coverage"  # No AIS data → cannot classify
 
-            u_name = get_unidentified_name(det_id)
+            u_name = get_unidentified_name(int(det_ids[i]))
             await db.execute(
                 text("""
                     UPDATE detections

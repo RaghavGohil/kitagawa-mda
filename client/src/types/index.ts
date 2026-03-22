@@ -1,5 +1,5 @@
 export type VesselType = "ship" | "unidentified";
-export type AnomalyType = "identified" | "no_anomaly" | "anomaly" | "unidentified";
+export type AnomalyType = "identified" | "anomaly" | "out_of_coverage";
 
 export type ZoneType = "eez" | "restricted" | "port" | "shipping_lane";
 
@@ -32,6 +32,7 @@ export interface Vessel {
         confidence: number;
         description: string;
     };
+    color?: string;  // Backend-authoritative color from classification
     behaviorProfile?: {
         typicalSpeed: { min: number; max: number; avg: number };
         typicalRoutes: string[];

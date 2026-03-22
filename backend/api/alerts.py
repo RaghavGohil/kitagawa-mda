@@ -27,18 +27,23 @@ async def get_alerts(
       1. Anomaly alerts: identified vessels with correlation_distance > 500m
       2. Unidentified alerts: unmatched detections where AIS data was available
     """
-    # Query focused on grouped anomalies and unidentified vessels
+    # Only alert on TRUE dark vessels:
+    #   - classification = 'anomaly' (detected in coverage area, no AIS transmission)
+    #   - confidence >= 0.5 (meaningful detections only)
+    #   - Deduplicated per vessel using DISTINCT ON (v_id)
     sql = text("""
         SELECT DISTINCT ON (v_id)
-            d.id, 
-            COALESCE(d.mmsi, 0) as mmsi, 
+            d.id,
+            COALESCE(d.mmsi, 0) as mmsi,
             d.custom_name,
             d.detection_datetime,
-            d.correlation_distance_m,
+            d.confidence,
             d.classification as alert_type,
             COALESCE(d.mmsi, -d.id) as v_id
         FROM detections d
-        WHERE d.classification IN ('unidentified', 'anomaly')
+        WHERE d.classification = 'anomaly'
+          AND d.confidence >= 0.5
+          AND (d.fp_flags IS NULL OR d.fp_flags NOT LIKE '%land%')
         ORDER BY v_id, d.detection_datetime DESC
         LIMIT :limit
     """)
@@ -57,21 +62,19 @@ async def get_alerts(
     for r in all_rows:
         mmsi = r[1]
         custom_name = r[2]
-        alert_type = r[5]
-
-        if alert_type == "anomaly":
-            vessel_id = str(mmsi)
-            vessel_name = custom_name if custom_name else f"Vessel {mmsi}"
-        else:
-            vessel_id = f"unidentified-{r[0]}"
-            vessel_name = custom_name if custom_name else f"Unidentified {r[0]}"
+        vessel_id = f"unidentified-{r[0]}" if not mmsi else str(mmsi)
+        vessel_name = (
+            custom_name
+            if custom_name
+            else (f"Vessel {mmsi}" if mmsi else f"Dark Vessel {r[0]}")
+        )
 
         alerts.append(
             {
                 "id": f"alert-{r[0]}",
                 "vessel_id": vessel_id,
                 "vessel_name": vessel_name,
-                "type": alert_type,
+                "type": "anomaly",
                 "timestamp": r[3].isoformat() if r[3] else None,
             }
         )

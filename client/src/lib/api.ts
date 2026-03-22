@@ -33,6 +33,7 @@ interface ApiVesselSummary {
     sensor_types: string[];
     anomaly_type: AnomalyType;
     is_identified: boolean;
+    color?: string;
     cog?: number | null;
     sog?: number | null;
 }
@@ -55,6 +56,7 @@ export function transformVesselSummary(api: ApiVesselSummary): Vessel {
         mmsi: mmsiVal > 0 ? mmsiVal.toString() : "",
         name: api.name,
         type: isIdentified ? "ship" : "unidentified",
+        color: api.color,  // Backend-authoritative color
         position: {
             lat: api.lat,
             lng: api.lon,
@@ -65,7 +67,7 @@ export function transformVesselSummary(api: ApiVesselSummary): Vessel {
         },
         track: [],
         anomaly: {
-            type: api.anomaly_type || "unidentified",
+            type: api.anomaly_type || "out_of_coverage",
             confidence: api.avg_confidence,
             description: "",
         },
@@ -285,7 +287,7 @@ export async function fetchLivePositions(bounds?: {
         params.set("max_lat", bounds.maxLat.toString());
     }
 
-    const response = await fetch(`${API_BASE_URL}/ais/live/positions?${params}`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/ais/live/positions?${params}`);
     if (!response.ok) {
         return [];
     }

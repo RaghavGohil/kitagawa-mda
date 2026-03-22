@@ -3,7 +3,6 @@
 import { Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
 import { Vessel } from "@/types";
-import { anomalyTypeData, vesselTypeData } from "@/data/data";
 
 interface VesselMarkerProps {
     vessel: Vessel;
@@ -35,14 +34,18 @@ export const VesselMarker = ({
     // Hide if far in future or too old
     if (ageMs < -5 * 60 * 1000 || ageMs > timeRangeMs) return null;
 
-    // Color Logic
-    let color = anomalyTypeData["unidentified"].color;
+    // Color Logic — use backend-authoritative color for detected vessels
+    // Live AIS vessels are always emerald green (they don't pass through classification)
+    let color: string;
     if (isLive) {
         color = "#10b981"; // Emerald Green for Live AIS
-    } else if (vessel.type === "ship") {
-        color = vesselTypeData["ship"].color;
-    } else if (vessel.anomaly.type === "anomaly") {
-        color = anomalyTypeData["anomaly"].color;
+    } else {
+        // Use backend color if available, fallback to anomaly type mapping
+        color = vessel.color ?? (
+            vessel.anomaly.type === "identified" ? "#10b981" :
+                vessel.anomaly.type === "anomaly" ? "#ef4444" :
+                    "#6b7280"
+        );
     }
 
     const strokeColor = color;

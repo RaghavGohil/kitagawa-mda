@@ -25,6 +25,7 @@ from backend.api.stats import router as stats_router
 from backend.api.vessels import router as vessels_router
 from backend.api.boundaries import router as boundaries_router
 from backend.api.ais_live import router as ais_live_router
+from backend.api.config import router as config_router
 from backend.db.connection import close_db, init_db
 
 
@@ -99,6 +100,7 @@ app.include_router(alerts_router)
 app.include_router(stats_router)
 app.include_router(boundaries_router)
 app.include_router(ais_live_router)
+app.include_router(config_router)
 
 
 # ---------------------------------------------------------------------------

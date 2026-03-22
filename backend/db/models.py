@@ -141,6 +141,7 @@ class AISVessel(Base):
     mmsi = Column(BigInteger, primary_key=True, index=True)
     vessel_name = Column(String(512), nullable=True)
     vessel_type = Column(String(255), nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class ProcessedImage(Base):

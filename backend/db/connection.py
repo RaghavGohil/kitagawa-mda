@@ -66,6 +66,12 @@ async def init_db():
     print("[DB] Ensuring base tables exist...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add last_seen to ais_vessels if missing (safe idempotent check)
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE ais_vessels ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP WITH TIME ZONE"
+            )
+        )
 
     # Step 3: Run Alembic migrations for incremental changes
     import os

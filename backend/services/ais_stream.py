@@ -69,7 +69,7 @@ class _AISStreamState:
             # We no longer trigger self._restart_event.set() here to avoid WebSocket churn.
             # Subscription is now fixed to global/large area on startup.
             print(
-                f"[AIS Stream] Area updated in memory, but subscription remains stable."
+                "[AIS Stream] Area updated in memory, but subscription remains stable."
             )
 
     def status(self) -> dict:
@@ -140,8 +140,13 @@ def stop():
 
 async def _run_loop():
     """Main ingestion loop with automatic reconnection and Area Tuning."""
-    # Use a broad, stable bounding box for background ingestion (entire world by default)
-    _state.current_bboxes = [[[-90, -180], [90, 180]]]
+    # Use broad, stable bounding boxes (split into 4 quadrants to avoid area limit issues)
+    _state.current_bboxes = [
+        [[-90, -180], [0, 0]],
+        [[-90, 0], [0, 180]],
+        [[0, -180], [90, 0]],
+        [[0, 0], [90, 180]],
+    ]
 
     if AISSTREAM_BBOX:
         try:
@@ -180,22 +185,18 @@ async def _connect_and_ingest():
 
     async with websockets.connect(
         "wss://stream.aisstream.io/v0/stream",
-        ping_interval=30,
-        ping_timeout=30,
-        close_timeout=10,
+        ping_interval=10,
+        ping_timeout=10,
+        close_timeout=5,
     ) as ws:
-        # 2. Subscribe to bboxes
+        # 2. Subscribe to bboxes in ONE message (preferred by AISStream.io)
         bboxes = _state.current_bboxes or [[[-90, -180], [90, 180]]]
-        for bbox in bboxes:
-            await ws.send(
-                json.dumps(
-                    {
-                        "APIKey": AISSTREAM_API_KEY,
-                        "BoundingBoxes": bbox,
-                    }
-                )
-            )
-        print(f"[AIS Stream] Connected and subscribed to {len(bboxes)} bboxes.")
+        subscribe_msg = {
+            "APIKey": AISSTREAM_API_KEY,
+            "BoundingBoxes": bboxes,  # Already a 3rd-level array: [[[lat, lon], [lat, lon]]]
+        }
+        await ws.send(json.dumps(subscribe_msg))
+        print(f"[AIS Stream] Connected and subscribed to {len(bboxes)} box(es).")
 
         # 3. Process messages
         # We use a combined waiter for ws.recv() and periodic flushes
@@ -275,9 +276,6 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
     _state.total_messages += 1
     _state.last_message_time = datetime.now(timezone.utc)
 
-    # Broadcast to frontend listeners
-    _state.broadcast(msg)
-
     # Note: We only care about PositionReport types for now (1, 2, 3)
     msg_type = msg.get("MessageType")
     if msg_type not in ["PositionReport"]:
@@ -314,16 +312,31 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
             "geom": f"SRID=4326;POINT({lon} {lat})",
             "sog": float(sog or 0),
             "cog": float(cog or 0),
-            "image_name": None,  # Will be filled during correlation
         }
     )
+
+    # Broadcast translated message to frontend listeners
+    _state.broadcast(
+        {
+            "mmsi": mmsi,
+            "timestamp": ts.isoformat(),
+            "sog": float(sog or 0),
+            "cog": float(cog or 0),
+            "lat": float(lat),
+            "lon": float(lon),
+        }
+    )
+
+    # Throttled logging for observability (every 100 messages)
+    if _state.total_messages % 100 == 0:
+        print(f"[AIS Stream] Broadcasted: {_state.total_messages}. MMSI: {mmsi}")
 
     # Update metadata if available
     vessel_data = msg.get("MetaData")
     if vessel_data:
         vessel_batch[mmsi] = {
-            "name": vessel_data.get("ShipName", "").strip(),
-            "type": vessel_data.get("ShipType"),
+            "vessel_name": vessel_data.get("ShipName", "").strip(),
+            "vessel_type": vessel_data.get("ShipType"),
         }
 
 
@@ -336,27 +349,30 @@ async def _flush_to_db(track_batch, vessel_batch):
         try:
             # 1. Update/Upsert Vessels
             for mmsi, data in vessel_batch.items():
-                if not data["name"]:
+                if not data["vessel_name"]:
                     continue
 
                 upsert_sql = """
-                    INSERT INTO vessels (mmsi, name, type, last_seen)
-                    VALUES (:mmsi, :name, :type, NOW())
+                    INSERT INTO ais_vessels (mmsi, vessel_name, vessel_type, last_seen)
+                    VALUES (:mmsi, :vessel_name, :vessel_type, NOW())
                     ON CONFLICT (mmsi) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        type = EXCLUDED.type,
+                        vessel_name = EXCLUDED.vessel_name,
+                        vessel_type = EXCLUDED.vessel_type,
                         last_seen = NOW()
                 """
                 await db.execute(
                     text(upsert_sql),
-                    {"mmsi": mmsi, "name": data["name"], "type": data["type"]},
+                    {
+                        "mmsi": mmsi,
+                        "vessel_name": data["vessel_name"],
+                        "vessel_type": data["vessel_type"],
+                    },
                 )
 
-            # 2. Insert Tracks
             if track_batch:
                 insert_sql = """
-                    INSERT INTO ais_tracks (mmsi, timestamp, geom, sog, cog, image_name)
-                    VALUES (:mmsi, :timestamp, ST_GeomFromEWKT(:geom), :sog, :cog, :image_name)
+                    INSERT INTO ais_tracks (mmsi, timestamp, geom, sog, cog)
+                    VALUES (:mmsi, :timestamp, ST_GeomFromEWKT(:geom), :sog, :cog)
                 """
                 await db.execute(text(insert_sql), track_batch)
 

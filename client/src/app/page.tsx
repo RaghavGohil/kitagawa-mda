@@ -38,12 +38,13 @@ export default function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showTracks, setShowTracks] = useState(true);
   const [showLiveAIS, setShowLiveAIS] = useState(true);
+  const [showCoverage, setShowCoverage] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(new Date());
   const [jumpToTime, setJumpToTime] = useState<Date | null>(null);
   const [timeRangeMs, setTimeRangeMs] = useState<number>(24 * 60 * 60 * 1000);
 
   const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<Set<AnomalyType>>(
-    new Set(["identified", "no_anomaly", "anomaly", "unidentified"]),
+    new Set(["identified", "anomaly", "out_of_coverage"]),
   );
   const [visibleZoneTypes, setVisibleZoneTypes] = useState<Set<ZoneType>>(
     new Set(["eez", "shipping_lane"]),
@@ -136,6 +137,7 @@ export default function DashboardPage() {
               onVesselSelect={handleVesselSelect}
               showTracks={showTracks}
               showLiveAIS={showLiveAIS}
+              showCoverage={showCoverage}
               visibleZoneTypes={visibleZoneTypes}
               playbackTime={playbackTime}
               timeRangeMs={timeRangeMs}

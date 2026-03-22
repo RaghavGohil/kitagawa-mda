@@ -14,7 +14,8 @@ import { Vessel, ZoneType, LiveVessel, VesselPosition } from "@/types";
 import { VesselMarker } from "@/components/map/VesselMarker";
 import { ZoneLayer } from "@/components/map/ZoneLayer";
 import { AISTrackLayer } from "@/components/map/AISTrackLayer";
-import { LiveAISLayer } from "@/components/map/LiveAISLayer";
+import { LiveAISLayer } from "./LiveAISLayer";
+import { CoverageLayer } from "./CoverageLayer";
 import "leaflet/dist/leaflet.css";
 
 interface MapViewProps {
@@ -23,6 +24,7 @@ interface MapViewProps {
     onVesselSelect: (vessel: Vessel | null) => void;
     showTracks: boolean;
     showLiveAIS: boolean;
+    showCoverage?: boolean;
     visibleZoneTypes: Set<ZoneType>;
     playbackTime: Date;
     timeRangeMs?: number;
@@ -145,6 +147,7 @@ export const MapView = ({
     onVesselSelect,
     showTracks,
     showLiveAIS,
+    showCoverage = false,
     visibleZoneTypes,
     playbackTime,
     timeRangeMs,
@@ -168,6 +171,13 @@ export const MapView = ({
     const handleLiveUpdate = useCallback((updates: Record<number, LiveVessel>) => {
         setLiveVessels(prev => ({ ...prev, ...updates }));
     }, []);
+
+    // Clear live state when layer is toggled off
+    useEffect(() => {
+        if (!showLiveAIS) {
+            setLiveVessels({});
+        }
+    }, [showLiveAIS]);
 
     // Merge detected vessels with live AIS vessels
     // If a detected vessel has an MMSI that exists in live AIS, we prioritize the live position
@@ -241,18 +251,28 @@ export const MapView = ({
 
             <ZoneLayer visibleZoneTypes={visibleZoneTypes} />
 
+            {/* Coverage density overlay — renders below vessel markers */}
+            <CoverageLayer show={showCoverage} />
+
             <LiveAISLayer onUpdate={handleLiveUpdate} />
 
             <AISTrackLayer
                 show={showTracks}
                 playbackTime={playbackTime}
                 correlatedVessels={allEntities
-                    .filter(v => parseInt(v.mmsi) > 0 && v.position?.lat != null && v.position?.lng != null)
+                    .filter(v =>
+                        // Only request tracks for detection-based vessels with real MMSIs
+                        // Live-only vessels (live-*) don't have a correlated detection time
+                        !v.id.startsWith("live-") &&
+                        parseInt(v.mmsi) > 0 &&
+                        v.position?.lat != null &&
+                        v.position?.lng != null
+                    )
                     .map(v => ({
                         mmsi: parseInt(v.mmsi),
                         lat: v.position.lat,
                         lon: v.position.lng,
-                        detectionTime: v.position.timestamp.getTime(),
+                        detectionTime: v.position.timestamp?.getTime() ?? Date.now(),
                     }))}
             />
 

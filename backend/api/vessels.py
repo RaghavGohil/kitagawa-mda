@@ -67,6 +67,21 @@ async def _get_ais_coverage_dates(db: AsyncSession) -> dict[str, bool]:
     return cache
 
 
+# ---------------------------------------------------------------------------
+# Backend-authoritative classification color map
+# ---------------------------------------------------------------------------
+_CLASSIFICATION_COLORS = {
+    "identified": "#10b981",  # Emerald green
+    "anomaly": "#ef4444",  # Red — dark vessel (in coverage, no AIS)
+    "out_of_coverage": "#6b7280",  # Gray — no AIS data available
+}
+_CLASSIFICATION_LABELS = {
+    "identified": "Identified",
+    "anomaly": "Dark Vessel",
+    "out_of_coverage": "Out of Coverage",
+}
+
+
 def _classify_vessel(
     mmsi: int,
     correlation_dist: float | None,
@@ -75,23 +90,24 @@ def _classify_vessel(
     db_classification: str | None = None,
 ) -> str:
     """
-    Classification mapping (fallback to legacy logic if db_classification is missing).
+    3-State classification (fallback when db_classification is missing):
+      - identified:      Matched AIS within 500m
+      - anomaly:         In coverage area, no AIS match (dark vessel)
+      - out_of_coverage: No AIS data for that area/date
     """
-    if db_classification:
+    if db_classification and db_classification in _CLASSIFICATION_COLORS:
         return db_classification
 
-    if mmsi and mmsi > 0:
-        if correlation_dist is not None and correlation_dist <= 500:
-            return "identified"
-        return "anomaly"
+    if mmsi and mmsi > 0 and correlation_dist is not None and correlation_dist <= 500:
+        return "identified"
 
-    # Unidentified — check if AIS was available
+    # Unidentified or bad match — check AIS coverage
     if detection_date:
         date_key = detection_date[:10]  # "YYYY-MM-DD"
         if coverage.get(date_key, False):
-            return "unidentified"
+            return "anomaly"  # Coverage existed, vessel was dark
 
-    return "ais_gap"
+    return "out_of_coverage"
 
 
 @router.get("")
@@ -145,6 +161,9 @@ async def get_vessels(
 
     where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
+    # Landmask filter: exclude detections flagged as being on land
+    landmask_filter = "(fp_flags IS NULL OR fp_flags NOT LIKE '%land%')"
+
     # Simplified query — leverages stored classification
     sql = text(f"""
         SELECT
@@ -160,8 +179,8 @@ async def get_vessels(
             MAX(COALESCE(mmsi, 0)) as real_mmsi,
             MAX(classification) as global_classification
         FROM detections
-        WHERE {where_str}
-        GROUP BY 
+        WHERE {where_str} AND {landmask_filter}
+        GROUP BY
             mmsi,
             CASE WHEN mmsi IS NULL THEN ST_SnapToGrid(geom, 0.0005) ELSE NULL END
         ORDER BY last_seen DESC
@@ -197,6 +216,7 @@ async def get_vessels(
         anomaly_type = _classify_vessel(
             real_mmsi, avg_dist, last_seen_str, coverage, db_classification=db_cls
         )
+        color = _CLASSIFICATION_COLORS.get(anomaly_type, "#6b7280")
         ais = ais_info.get(real_mmsi, {})
 
         vessels.append(
@@ -217,7 +237,8 @@ async def get_vessels(
                 "lon": _safe_round(r[5], 6),
                 "sensor_types": list(set(r[6])) if r[6] else [],
                 "anomaly_type": anomaly_type,
-                "is_identified": real_mmsi > 0,
+                "color": color,
+                "is_identified": real_mmsi > 0 and anomaly_type == "identified",
                 "sog": _safe_round(ais.get("sog"), 2),
                 "cog": _safe_round(ais.get("cog"), 2),
             }

@@ -15,7 +15,7 @@ from backend.services.ais_stream import (
     set_active_bboxes,
 )
 
-router = APIRouter(prefix="/ais/live", tags=["ais_live"])
+router = APIRouter(prefix="/api/v1/ais/live", tags=["ais_live"])
 
 
 @router.get("/status")
