@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
+
 def _safe_round(val, ndigits):
     if val is None:
         return None
@@ -30,6 +31,7 @@ def _safe_round(val, ndigits):
         return round(f_val, ndigits)
     except (ValueError, TypeError):
         return None
+
 
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
@@ -42,7 +44,7 @@ router = APIRouter(prefix="/api/v1/vessels", tags=["vessels"])
 # ---------------------------------------------------------------------------
 # AIS Coverage Cache (TTL-based, avoids per-request DB hits)
 # ---------------------------------------------------------------------------
-_ais_coverage_cache: dict[str, bool] = {}   # date_str -> has_coverage
+_ais_coverage_cache: dict[str, bool] = {}  # date_str -> has_coverage
 _ais_coverage_cache_ts: float = 0.0
 _AIS_COVERAGE_TTL = 300  # 5 minutes
 
@@ -65,26 +67,31 @@ async def _get_ais_coverage_dates(db: AsyncSession) -> dict[str, bool]:
     return cache
 
 
-def _classify_vessel(mmsi: int, correlation_dist: float | None, detection_date: str | None, coverage: dict[str, bool]) -> str:
+def _classify_vessel(
+    mmsi: int,
+    correlation_dist: float | None,
+    detection_date: str | None,
+    coverage: dict[str, bool],
+    db_classification: str | None = None,
+) -> str:
     """
-    4-State classification:
-      - 'identified'   : mmsi > 0 (matched to AIS)
-      - 'no_anomaly'   : mmsi > 0 AND correlation_distance <= 500m
-      - 'anomaly'      : mmsi is NULL/0, but AIS data was available for that date
-      - 'unidentified' : mmsi is NULL/0, and AIS data was NOT available for that date
+    Classification mapping (fallback to legacy logic if db_classification is missing).
     """
+    if db_classification:
+        return db_classification
+
     if mmsi and mmsi > 0:
         if correlation_dist is not None and correlation_dist <= 500:
-            return "no_anomaly"
-        return "identified"
+            return "identified"
+        return "anomaly"
 
     # Unidentified — check if AIS was available
     if detection_date:
         date_key = detection_date[:10]  # "YYYY-MM-DD"
         if coverage.get(date_key, False):
-            return "anomaly"
+            return "unidentified"
 
-    return "unidentified"
+    return "ais_gap"
 
 
 @router.get("")
@@ -109,12 +116,28 @@ async def get_vessels(
     where_clauses = []
     params = {"limit": limit}
 
-    if min_lon is not None and min_lat is not None and max_lon is not None and max_lat is not None:
-        where_clauses.append("ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))")
-        params.update({"min_lon": min_lon, "min_lat": min_lat, "max_lon": max_lon, "max_lat": max_lat})
+    if (
+        min_lon is not None
+        and min_lat is not None
+        and max_lon is not None
+        and max_lat is not None
+    ):
+        where_clauses.append(
+            "ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))"
+        )
+        params.update(
+            {
+                "min_lon": min_lon,
+                "min_lat": min_lat,
+                "max_lon": max_lon,
+                "max_lat": max_lat,
+            }
+        )
 
     if anomaly_only:
-        where_clauses.append("(correlation_distance_m > 500 OR correlation_distance_m IS NULL)")
+        where_clauses.append(
+            "(correlation_distance_m > 500 OR correlation_distance_m IS NULL)"
+        )
 
     if satellite_type:
         where_clauses.append("sensor_type = :sensor")
@@ -122,7 +145,7 @@ async def get_vessels(
 
     where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
-    # Simplified query — no more expensive EXISTS/LATERAL per row
+    # Simplified query — leverages stored classification
     sql = text(f"""
         SELECT
             COALESCE(mmsi, -MIN(id)) AS v_id,
@@ -134,7 +157,8 @@ async def get_vessels(
             ARRAY_AGG(sensor_type) AS sensor_types,
             AVG(correlation_distance_m) AS avg_dist,
             MAX(custom_name) AS display_name,
-            MAX(COALESCE(mmsi, 0)) as real_mmsi
+            MAX(COALESCE(mmsi, 0)) as real_mmsi,
+            MAX(classification) as global_classification
         FROM detections
         WHERE {where_str}
         GROUP BY 
@@ -158,7 +182,7 @@ async def get_vessels(
                 WHERE mmsi = ANY(:mmsis)
                 ORDER BY mmsi, timestamp DESC
             """),
-            {"mmsis": identified_mmsis}
+            {"mmsis": identified_mmsis},
         )
         for ar in ais_result.fetchall():
             ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
@@ -168,25 +192,36 @@ async def get_vessels(
         real_mmsi = int(r[9]) if r[9] else 0
         last_seen_str = r[3].isoformat() if r[3] else None
         avg_dist = float(r[7]) if r[7] is not None else None
+        db_cls = r[10]
 
-        anomaly_type = _classify_vessel(real_mmsi, avg_dist, last_seen_str, coverage)
+        anomaly_type = _classify_vessel(
+            real_mmsi, avg_dist, last_seen_str, coverage, db_classification=db_cls
+        )
         ais = ais_info.get(real_mmsi, {})
 
-        vessels.append({
-            "mmsi": real_mmsi,
-            "v_id": r[0],
-            "name": r[8] if r[8] else (f"Vessel {real_mmsi}" if real_mmsi > 0 else f"Unidentified {abs(r[0])}"),
-            "detection_count": r[1],
-            "avg_confidence": _safe_round(r[2], 4),
-            "last_seen": last_seen_str,
-            "lat": _safe_round(r[4], 6),
-            "lon": _safe_round(r[5], 6),
-            "sensor_types": list(set(r[6])) if r[6] else [],
-            "anomaly_type": anomaly_type,
-            "is_identified": real_mmsi > 0,
-            "sog": _safe_round(ais.get("sog"), 2),
-            "cog": _safe_round(ais.get("cog"), 2),
-        })
+        vessels.append(
+            {
+                "mmsi": real_mmsi,
+                "v_id": r[0],
+                "name": r[8]
+                if r[8]
+                else (
+                    f"Vessel {real_mmsi}"
+                    if real_mmsi > 0
+                    else f"Unidentified {abs(r[0])}"
+                ),
+                "detection_count": r[1],
+                "avg_confidence": _safe_round(r[2], 4),
+                "last_seen": last_seen_str,
+                "lat": _safe_round(r[4], 6),
+                "lon": _safe_round(r[5], 6),
+                "sensor_types": list(set(r[6])) if r[6] else [],
+                "anomaly_type": anomaly_type,
+                "is_identified": real_mmsi > 0,
+                "sog": _safe_round(ais.get("sog"), 2),
+                "cog": _safe_round(ais.get("cog"), 2),
+            }
+        )
 
     return {
         "vessels": vessels,
@@ -207,6 +242,7 @@ async def get_chip_image(
     row = result.fetchone()
     if not row or not row[0]:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Chip not found")
 
     from backend.services.chips import get_minio_client
@@ -221,6 +257,7 @@ async def get_chip_image(
         return StreamingResponse(data, media_type="image/png")
     except Exception:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Chip not found in storage")
 
 
@@ -243,7 +280,7 @@ async def get_vessel(
                 d.id, d.image_name, d.sensor_type, d.confidence,
                 d.detection_datetime, d.correlation_distance_m,
                 ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon,
-                ic.minio_key, d.custom_name
+                ic.minio_key, d.custom_name, d.classification
             FROM detections d
             LEFT JOIN image_chips ic ON ic.detection_id = d.id
             WHERE {where_clause}
@@ -254,13 +291,18 @@ async def get_vessel(
     det_rows = det_result.fetchall()
 
     # Classify using detection date
-    det_datetime_str = det_rows[0][4].isoformat() if (det_rows and det_rows[0][4]) else None
+    det_datetime_str = (
+        det_rows[0][4].isoformat() if (det_rows and det_rows[0][4]) else None
+    )
     avg_dist = det_rows[0][5] if det_rows else None
+    db_cls = det_rows[0][10] if (det_rows and len(det_rows[0]) > 10) else None
+
     anomaly_type = _classify_vessel(
         0 if is_unidentified else mmsi_val,
         avg_dist,
         det_datetime_str,
-        coverage
+        coverage,
+        db_classification=db_cls,
     )
 
     # Latest AIS track snippet
@@ -284,17 +326,19 @@ async def get_vessel(
         if r[8]:
             # Use proxy URL so the browser can reach the image
             chip_url = f"/api/v1/vessels/chips/{r[0]}"
-        detections.append({
-            "id": r[0],
-            "image_name": r[1],
-            "sensor_type": r[2],
-            "confidence": _safe_round(r[3], 4),
-            "detection_datetime": r[4].isoformat() if r[4] else None,
-            "correlation_distance_m": _safe_round(r[5], 2),
-            "lat": _safe_round(r[6], 6),
-            "lon": _safe_round(r[7], 6),
-            "chip_url": chip_url,
-        })
+        detections.append(
+            {
+                "id": r[0],
+                "image_name": r[1],
+                "sensor_type": r[2],
+                "confidence": _safe_round(r[3], 4),
+                "detection_datetime": r[4].isoformat() if r[4] else None,
+                "correlation_distance_m": _safe_round(r[5], 2),
+                "lat": _safe_round(r[6], 6),
+                "lon": _safe_round(r[7], 6),
+                "chip_url": chip_url,
+            }
+        )
 
     track = [
         {
@@ -310,7 +354,11 @@ async def get_vessel(
     return {
         "mmsi": mmsi_val if not is_unidentified else 0,
         "v_id": mmsi,  # This is the unique grouping key
-        "name": det_rows[0][9] if (det_rows and det_rows[0][9]) else (f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"),
+        "name": det_rows[0][9]
+        if (det_rows and det_rows[0][9])
+        else (
+            f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"
+        ),
         "detection_count": len(detections),
         "anomaly_type": anomaly_type,
         "detections": detections,

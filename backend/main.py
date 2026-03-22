@@ -19,6 +19,7 @@ from backend.api.detections import router as detections_router
 from backend.api.pipeline import (
     router as pipeline_router,
     start_background_ingest_polling,
+    pipeline_worker,
 )
 from backend.api.stats import router as stats_router
 from backend.api.vessels import router as vessels_router
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
 
     if not os.getenv("DISABLE_AUTO_INGEST"):
         asyncio.create_task(start_background_ingest_polling())
+        asyncio.create_task(pipeline_worker())
     else:
         print("[Backend Server] Auto-ingest disabled via DISABLE_AUTO_INGEST flag.")
 

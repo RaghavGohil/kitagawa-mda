@@ -24,34 +24,39 @@ export const VesselMarker = ({
     playbackTime,
     timeRangeMs = 2 * 24 * 60 * 60 * 1000,
 }: VesselMarkerProps) => {
-    const size = 33;
+    const isLive = vessel.id.startsWith("live-");
+    const size = isLive ? 28 : 33; // Live markers are slightly more refined
 
     // Time-based opacity
     const ageMs = playbackTime.getTime() - vessel.position.timestamp.getTime();
     const normalizedAge = Math.max(0, Math.min(1, ageMs / timeRangeMs));
     const timeOpacity = Math.max(0.3, 1 - normalizedAge);
 
-    if (ageMs < 0 || ageMs > timeRangeMs) return null;
+    // Hide if far in future or too old
+    if (ageMs < -5 * 60 * 1000 || ageMs > timeRangeMs) return null;
 
-    // Color
-    const baseColor =
-        vessel.type === "ship" ? vesselTypeData["ship"].color :
-            vessel.anomaly.type === "anomaly" ? anomalyTypeData["anomaly"].color :
-                anomalyTypeData["unidentified"].color;
+    // Color Logic
+    let color = anomalyTypeData["unidentified"].color;
+    if (isLive) {
+        color = "#10b981"; // Emerald Green for Live AIS
+    } else if (vessel.type === "ship") {
+        color = vesselTypeData["ship"].color;
+    } else if (vessel.anomaly.type === "anomaly") {
+        color = anomalyTypeData["anomaly"].color;
+    }
 
-    const ageHours = ageMs / (1000 * 60 * 60);
-    const color = baseColor;
-    const strokeColor = baseColor;
-    const strokeWidth = isSelected ? 8 : (ageHours < 1 ? 6 : 4);
+    const strokeColor = color;
+    const strokeWidth = isSelected ? 8 : (ageMs / (1000 * 60 * 60) < 1 ? 6 : 4);
 
     // Zoom opacity for labels
     const labelOpacity = (zoom <= 8 ? 0 : zoom === 9 ? 0.4 : zoom === 10 ? 0.7 : 1) * timeOpacity;
 
-    // SVG
+    // SVG - Unified Polygon Design
     const hasHeading = vessel.position.heading !== 0 && vessel.position.heading != null;
 
+    // We use the EXACT polygon points requested and seen in the reference VesselMarker
     const svgContent = hasHeading
-        ? `<svg width="${size}" height="${size}" viewBox="-10 -10 120 120" style="transform: rotate(${vessel.position.heading}deg); transition: transform 0.15s linear; cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
+        ? `<svg width="${size}" height="${size}" viewBox="-10 -10 120 120" style="transform: rotate(${vessel.position.heading}deg); transition: transform 0.8s linear; cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
         <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.8) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
       </svg>`
         : `<svg width="${size}" height="${size}" viewBox="0 0 100 100" style="cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
@@ -59,7 +64,7 @@ export const VesselMarker = ({
       </svg>`;
 
     const icon = L.divIcon({
-        className: "",
+        className: "unified-vessel-icon",
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2],
         html: `
@@ -75,12 +80,16 @@ export const VesselMarker = ({
     // Track
     const isCorrelated = vessel.mmsi && String(vessel.mmsi).trim() !== "";
     const shouldShowTrack = isCorrelated && (showTrack || isSelected);
-    const trackPositions: [number, number][] = vessel.track.map(p => [p.lat, p.lng]);
+    const trackPositions: [number, number][] = vessel.track?.map(p => [p.lat, p.lng]) || [];
 
-    // Jitter for overlapping markers
-    const idNum = parseInt(vessel.id.split("-").pop() || "0", 16) || 0;
-    const jitterLat = ((idNum % 7) - 3) * 0.00008;
-    const jitterLng = (((idNum / 7) % 7) - 3) * 0.00008;
+    // Jitter for overlapping markers (Detections only)
+    let jitterLat = 0;
+    let jitterLng = 0;
+    if (!isLive) {
+        const idNum = parseInt(vessel.id.split("-").pop() || "0", 16) || 0;
+        jitterLat = ((idNum % 7) - 3) * 0.00008;
+        jitterLng = (((idNum / 7) % 7) - 3) * 0.00008;
+    }
 
     const position: [number, number] = [
         vessel.position.lat + jitterLat,
@@ -89,6 +98,10 @@ export const VesselMarker = ({
 
     return (
         <>
+            {/* 
+              Historical Tracks are now handled by AISTrackLayer for MMSI vessels. 
+              The internal 'track' property is only for detected image-based local context.
+            */}
             {shouldShowTrack && trackPositions.length > 1 && (
                 <Polyline
                     positions={trackPositions}

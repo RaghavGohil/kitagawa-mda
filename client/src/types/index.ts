@@ -65,3 +65,12 @@ export interface DashboardStats {
     averageSpeed: number;
     vesselsByType: Record<VesselType, number>;
 }
+
+export interface LiveVessel {
+    mmsi: number;
+    timestamp: string;
+    sog: number;
+    cog: number;
+    lat: number;
+    lon: number;
+}

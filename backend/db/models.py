@@ -74,6 +74,9 @@ class Detection(Base):
     final_score = Column(Float, nullable=True)  # fused ranking score
     fp_flags = Column(Text, nullable=True)  # JSON list of FP reason codes
 
+    # 3-State classification: "identified", "unidentified", "ais_gap"
+    classification = Column(String(32), nullable=True, index=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

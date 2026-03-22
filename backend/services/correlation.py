@@ -201,7 +201,12 @@ async def run_correlation(
             best_dist[day_idx] = sub_dist
             best_mmsi[day_idx] = sub_mmsi
 
-    # 6. Update detections in PostGIS with identity AND unique names
+    # 5. Fetch Coverage for classification fallback
+    from backend.api.vessels import _get_ais_coverage_dates
+
+    coverage = await _get_ais_coverage_dates(db)
+
+    # 6. Update detections in PostGIS with identity AND classification
     from shared.naming import get_unidentified_name
 
     correlated = 0
@@ -210,12 +215,23 @@ async def run_correlation(
         dist = float(best_dist[i])
         det_id = int(det_ids[i])
 
+        # Determine classification
+        cls_state = "unidentified"
+        det_date_str = det_times[i].strftime("%Y-%m-%d")
+        has_coverage = coverage.get(det_date_str, False)
+
         if mmsi != 0:
+            if dist <= 500:
+                cls_state = "identified"
+            else:
+                cls_state = "anomaly"  # Identified but suspicious distance
+
             await db.execute(
                 text("""
                     UPDATE detections
                     SET mmsi = :mmsi, 
                         correlation_distance_m = :dist,
+                        classification = :cls,
                         custom_name = COALESCE(
                             (SELECT vessel_name FROM ais_vessels WHERE mmsi = :mmsi AND vessel_name IS NOT NULL),
                             'Vessel ' || CAST(:mmsi AS VARCHAR)
@@ -225,20 +241,27 @@ async def run_correlation(
                 {
                     "mmsi": mmsi,
                     "dist": dist,
+                    "cls": cls_state,
                     "det_id": det_id,
                 },
             )
             correlated += 1
         else:
-            # Assign unique name for unidentified vessel
+            # No MMSI match
+            if has_coverage:
+                cls_state = "unidentified"  # Anomaly: should be there but isn't
+            else:
+                cls_state = "ais_gap"  # Unknown: out of coverage
+
             u_name = get_unidentified_name(det_id)
             await db.execute(
                 text("""
                     UPDATE detections
-                    SET custom_name = :name
+                    SET custom_name = :name,
+                        classification = :cls
                     WHERE id = :det_id
                 """),
-                {"name": u_name, "det_id": det_id},
+                {"name": u_name, "cls": cls_state, "det_id": det_id},
             )
 
         if progress_callback and i % 50 == 0:
@@ -246,7 +269,9 @@ async def run_correlation(
             await progress_callback(progress_pct)
 
     await db.commit()
-    print(f"[Correlation] Correlated {correlated}/{len(det_ids)} detections.")
+    print(
+        f"[Correlation] Processed {len(det_ids)} detections. {correlated} correlated."
+    )
 
     if progress_callback:
         await progress_callback(100.0)

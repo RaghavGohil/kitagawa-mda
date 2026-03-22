@@ -268,3 +268,26 @@ export async function fetchBoundaries(): Promise<{ type: string; features: unkno
     }
     return response.json();
 }
+
+import { LiveVessel } from "@/types";
+
+export async function fetchLivePositions(bounds?: {
+    minLon: number;
+    minLat: number;
+    maxLon: number;
+    maxLat: number;
+}): Promise<LiveVessel[]> {
+    const params = new URLSearchParams();
+    if (bounds) {
+        params.set("min_lon", bounds.minLon.toString());
+        params.set("min_lat", bounds.minLat.toString());
+        params.set("max_lon", bounds.maxLon.toString());
+        params.set("max_lat", bounds.maxLat.toString());
+    }
+
+    const response = await fetch(`${API_BASE_URL}/ais/live/positions?${params}`);
+    if (!response.ok) {
+        return [];
+    }
+    return response.json();
+}

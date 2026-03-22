@@ -12,18 +12,22 @@ interface LayerControlProps {
     visibleAnomalyTypes: Set<AnomalyType>;
     visibleZoneTypes: Set<ZoneType>;
     showTracks: boolean;
+    showLiveAIS: boolean;
     onAnomalyTypesToggle: (type: AnomalyType) => void;
     onZoneTypesToggle: (type: ZoneType) => void;
     onShowTracksChange: (show: boolean) => void;
+    onShowLiveAISChange: (show: boolean) => void;
 }
 
 export const LayerControl = ({
     visibleAnomalyTypes,
     visibleZoneTypes,
     showTracks,
+    showLiveAIS,
     onAnomalyTypesToggle,
     onZoneTypesToggle,
     onShowTracksChange,
+    onShowLiveAISChange,
 }: LayerControlProps) => {
     const [isExpanded, setIsExpanded] = useState(false);
 
@@ -87,6 +91,20 @@ export const LayerControl = ({
                                 <span className="text-sm font-medium group-hover:text-foreground transition-colors">Vessel Tracks</span>
                             </div>
                             <Switch checked={showTracks} onCheckedChange={onShowTracksChange} />
+                        </label>
+
+                        <label className="flex items-center justify-between cursor-pointer group py-0.5 pt-1">
+                            <div className="flex items-center gap-2.5">
+                                <div className="relative">
+                                    <Layers className="h-4 w-4 text-primary" />
+                                    <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                                    </span>
+                                </div>
+                                <span className="text-sm font-bold group-hover:text-foreground transition-colors text-primary uppercase tracking-wider">Live Ships</span>
+                            </div>
+                            <Switch checked={showLiveAIS} onCheckedChange={onShowLiveAISChange} />
                         </label>
                     </div>
                 </div>

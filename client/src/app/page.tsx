@@ -36,7 +36,8 @@ export default function DashboardPage() {
 
   const [selectedVesselId, setSelectedVesselId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showTracks, setShowTracks] = useState(false);
+  const [showTracks, setShowTracks] = useState(true);
+  const [showLiveAIS, setShowLiveAIS] = useState(true);
   const [playbackTime, setPlaybackTime] = useState(new Date());
   const [jumpToTime, setJumpToTime] = useState<Date | null>(null);
   const [timeRangeMs, setTimeRangeMs] = useState<number>(24 * 60 * 60 * 1000);
@@ -134,6 +135,7 @@ export default function DashboardPage() {
               selectedVessel={selectedVessel}
               onVesselSelect={handleVesselSelect}
               showTracks={showTracks}
+              showLiveAIS={showLiveAIS}
               visibleZoneTypes={visibleZoneTypes}
               playbackTime={playbackTime}
               timeRangeMs={timeRangeMs}
@@ -177,9 +179,11 @@ export default function DashboardPage() {
                   visibleAnomalyTypes={visibleAnomalyTypes}
                   visibleZoneTypes={visibleZoneTypes}
                   showTracks={showTracks}
+                  showLiveAIS={showLiveAIS}
                   onAnomalyTypesToggle={toggleAnomalyType}
                   onZoneTypesToggle={toggleZoneType}
                   onShowTracksChange={setShowTracks}
+                  onShowLiveAISChange={setShowLiveAIS}
                 />
               </div>
             </div>
