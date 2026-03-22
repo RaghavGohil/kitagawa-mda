@@ -143,23 +143,7 @@ export default function DashboardPage() {
   const selectedVessel = selectedVesselId
     ? selectedVesselDetail || allVessels.find(v => v.id === selectedVesselId) || null
     : null;
-  const handleIdentify = async (vesselId: string) => {
-    if (vesselId.startsWith("live-")) return;
 
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/correlate/${vesselId}`, {
-        method: "POST",
-      });
-      if (response.ok) {
-        // Refresh vessel data to show the new correlation
-        queryClient.invalidateQueries({ queryKey: ["vessels"] });
-        // Also refresh detail if needed
-        queryClient.invalidateQueries({ queryKey: ["vessel", vesselId] });
-      }
-    } catch (error) {
-      console.error("Failed to perform on-the-fly correlation:", error);
-    }
-  };
 
   return (
     <div className="h-[100dvh] w-full overflow-hidden bg-background flex flex-col" data-vessel-panel-open={!!selectedVesselId}>
@@ -247,7 +231,6 @@ export default function DashboardPage() {
               <VesselInfoPanel
                 vessel={selectedVessel}
                 isLoading={isLoadingDetail}
-                onIdentify={handleIdentify}
               />
             </aside>
           )}
