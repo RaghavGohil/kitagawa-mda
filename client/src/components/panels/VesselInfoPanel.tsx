@@ -11,7 +11,6 @@ import { anomalyTypeData, getAnomalyDescription } from "@/data/data";
 interface VesselInfoPanelProps {
     vessel: Vessel;
     isLoading?: boolean;
-    onIdentify?: (vesselId: string) => Promise<void>;
 }
 
 const InfoRow = ({ label, value, mono }: { label: string; value: string | undefined | null; mono?: boolean }) => (
@@ -21,7 +20,7 @@ const InfoRow = ({ label, value, mono }: { label: string; value: string | undefi
     </div>
 );
 
-export const VesselInfoPanel = ({ vessel, isLoading, onIdentify }: VesselInfoPanelProps) => {
+export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => {
     const isAnomaly = vessel.anomaly.type === "anomaly";
     const isOutOfCoverage = vessel.anomaly.type === "out_of_coverage";
     const isLive = vessel.id.startsWith("live-");

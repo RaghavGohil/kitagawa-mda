@@ -49,8 +49,7 @@ export const AISTrackLayer = ({
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const fetchTracks = useCallback(async () => {
-        // Only fetch if enabled and there are MMSIs to track
-        if (!show || correlatedVessels.length === 0) {
+        if (!show) {
             setTracks([]);
             return;
         }
@@ -237,7 +236,7 @@ export const AISTrackLayer = ({
                             interactive
                         >
                             <span className="font-mono text-[10px] font-bold text-[#34d399] drop-shadow-md">
-                                {track.vessel?.name || `MMSI: ${track.mmsi}`}
+                                {track.vessel?.name || (track.mmsi ? `MMSI: ${track.mmsi}` : "Dark Vessel")}
                             </span>
                         </Tooltip>
                     </Marker>

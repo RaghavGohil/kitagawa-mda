@@ -18,7 +18,7 @@ import math
 import time
 from typing import Optional
 
-import asyncio
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
@@ -213,22 +213,18 @@ async def get_vessels(
         for ar in ais_result.fetchall():
             ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
 
-    # --- AUTO-CORRELATION ON SEEK (EPHEMERAL) ---
+    # --- AUTO-CORRELATION ON SEEK (EPHEMERAL, SEQUENTIAL) ---
+    # Must be sequential: async sessions can't be shared across asyncio.gather
     indices_to_match = [i for i, r in enumerate(rows) if not r[9]]  # real_mmsi is r[9]
+    match_results = {}
     if indices_to_match:
         from backend.services.correlation import find_best_ais_match
 
-        # Correlate in parallel for better performance
-        async def wrap_match(idx):
+        for idx in indices_to_match[:20]:  # Cap at 20 for speed (~40ms total)
             r = rows[idx]
             match = await find_best_ais_match(db, r[4], r[5], r[3])
-            return idx, match
-
-        tasks = [wrap_match(i) for i in indices_to_match[:50]]  # Cap at 50 for speed
-        matches = await asyncio.gather(*tasks)
-        match_results = {idx: m for idx, m in matches}
-    else:
-        match_results = {}
+            if match:
+                match_results[idx] = match
 
     vessels = []
     for i, r in enumerate(rows):
@@ -408,7 +404,6 @@ async def get_vessel(
     # --- EPHEMERAL CORRELATION FOR DETAIL ---
     final_mmsi = mmsi_val if not is_unidentified else 0
     final_name = det_rows[0][9] if (det_rows and det_rows[0][9]) else None
-    final_dist = det_rows[0][5] if det_rows else None
 
     if is_unidentified and det_rows:
         from backend.services.correlation import find_best_ais_match
@@ -418,7 +413,6 @@ async def get_vessel(
         match = await find_best_ais_match(db, r0[6], r0[7], r0[4])
         if match:
             final_mmsi = match["mmsi"]
-            final_dist = match["dist"]
             final_name = match["name"]
             anomaly_type = "identified"
 
