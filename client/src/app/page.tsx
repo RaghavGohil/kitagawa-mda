@@ -57,10 +57,25 @@ export default function DashboardPage() {
     setSidebarOpen(!isMobile);
   }, [isMobile]);
 
+  const handleViewChange = useCallback((bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number }, zoom: number) => {
+    // Implement Overscan: fetch 25% more than the viewport to make panning smoother
+    const lonPadding = (bounds.maxLon - bounds.minLon) * 0.25;
+    const latPadding = (bounds.maxLat - bounds.minLat) * 0.25;
+
+    setMapBounds({
+      minLon: bounds.minLon - lonPadding,
+      minLat: bounds.minLat - latPadding,
+      maxLon: bounds.maxLon + lonPadding,
+      maxLat: bounds.maxLat + latPadding,
+    });
+    setMapZoom(zoom);
+  }, []);
+
   // ===================== DATA =====================
-  // Dynamic vessel limit: more ships visible at higher zoom
+  // Updated Dynamic vessel limit: more ships visible at higher zoom
   const vesselLimit = useMemo(() => {
     if (!mapZoom) return 500;
+    if (mapZoom >= 15) return 5000;
     if (mapZoom >= 12) return 2000;
     if (mapZoom >= 8) return 1000;
     if (mapZoom >= 5) return 500;
@@ -119,10 +134,6 @@ export default function DashboardPage() {
     });
   }, []);
 
-  const handleViewChange = useCallback((bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number }, zoom: number) => {
-    setMapBounds(bounds);
-    setMapZoom(zoom);
-  }, []);
 
   const handleTimeChange = useCallback((time: Date) => setPlaybackTime(time), []);
   const handleTimeRangeChange = useCallback((start: Date, end: Date) => setTimeRangeMs(end.getTime() - start.getTime()), []);

@@ -19,6 +19,11 @@ import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.db.connection import get_db
 
 
 def _safe_round(val, ndigits):
@@ -32,12 +37,6 @@ def _safe_round(val, ndigits):
     except (ValueError, TypeError):
         return None
 
-
-from fastapi.responses import StreamingResponse
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.db.connection import get_db
 
 router = APIRouter(prefix="/api/v1/vessels", tags=["vessels"])
 
@@ -119,7 +118,7 @@ async def get_vessels(
     zoom: int = Query(10, ge=1, le=22),
     anomaly_only: bool = Query(False),
     satellite_type: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(200, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
 ):
     """

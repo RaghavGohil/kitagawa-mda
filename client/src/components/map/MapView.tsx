@@ -261,9 +261,7 @@ export const MapView = ({
                 playbackTime={playbackTime}
                 correlatedVessels={allEntities
                     .filter(v =>
-                        // Only request tracks for detection-based vessels with real MMSIs
-                        // Live-only vessels (live-*) don't have a correlated detection time
-                        !v.id.startsWith("live-") &&
+                        // Request tracks for both detections and live ships
                         parseInt(v.mmsi) > 0 &&
                         v.position?.lat != null &&
                         v.position?.lng != null
@@ -272,7 +270,9 @@ export const MapView = ({
                         mmsi: parseInt(v.mmsi),
                         lat: v.position.lat,
                         lon: v.position.lng,
-                        detectionTime: v.position.timestamp?.getTime() ?? Date.now(),
+                        // For live ships seen 'now', use playbackTime as focus. 
+                        // For detections, use their original capture time.
+                        detectionTime: v.position.timestamp.getTime(),
                     }))}
             />
 
