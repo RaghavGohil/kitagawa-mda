@@ -146,26 +146,24 @@ export const VesselInfoPanel = ({ vessel, isLoading, onIdentify }: VesselInfoPan
 
             {/* Registration */}
             <div className="px-5 space-y-1">
-                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Registration</h4>
+                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-2">Registration</h4>
                 <InfoRow label="MMSI" value={vessel.mmsi} mono />
                 <InfoRow label="IMO" value={vessel.imo} mono />
-                <InfoRow label="Call Sign" value={vessel.callSign} />
+                <InfoRow label="Call Sign" value={vessel.callSign} mono />
                 <InfoRow label="Flag" value={vessel.flag} />
             </div>
 
             <Separator className="my-4" />
 
-            {/* Navigation */}
+            {/* Navigation & Voyage */}
             <div className="px-5 space-y-1">
-                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3 flex items-center gap-2">
+                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-2 flex items-center gap-2">
                     <Navigation className="h-3.5 w-3.5" />
-                    Navigation
+                    Voyage Info
                 </h4>
-                <InfoRow
-                    label="Position"
-                    value={vessel.position.lat != null ? `${vessel.position.lat.toFixed(4)}, ${vessel.position.lng.toFixed(4)}` : undefined}
-                    mono
-                />
+                <InfoRow label="Destination" value={vessel.destination} />
+                <InfoRow label="ETA" value={vessel.eta} />
+                <InfoRow label="Position" value={vessel.position.lat != null ? `${vessel.position.lat.toFixed(4)}, ${vessel.position.lng.toFixed(4)}` : undefined} mono />
                 <InfoRow label="Speed" value={vessel.position.speed != null ? `${vessel.position.speed.toFixed(1)} kn` : undefined} />
                 <InfoRow label="Heading" value={vessel.position.heading != null ? `${vessel.position.heading.toFixed(0)}°` : undefined} />
                 <InfoRow label="Course" value={vessel.position.course != null ? `${vessel.position.course.toFixed(0)}°` : undefined} />
@@ -173,9 +171,19 @@ export const VesselInfoPanel = ({ vessel, isLoading, onIdentify }: VesselInfoPan
 
             <Separator className="my-4" />
 
+            {/* Specifications */}
+            <div className="px-5 space-y-1">
+                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-2">Specifications</h4>
+                <InfoRow label="Length" value={vessel.length ? `${vessel.length.toFixed(0)} m` : undefined} />
+                <InfoRow label="Width" value={vessel.width ? `${vessel.width.toFixed(0)} m` : undefined} />
+                <InfoRow label="Draught" value={vessel.draught ? `${vessel.draught.toFixed(1)} m` : undefined} />
+            </div>
+
+            <Separator className="my-4" />
+
             {/* Detection Info */}
             <div className="px-5 space-y-1">
-                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3 flex items-center gap-2">
+                <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-2 flex items-center gap-2">
                     <Clock className="h-3.5 w-3.5" />
                     Detection
                 </h4>
@@ -183,18 +191,6 @@ export const VesselInfoPanel = ({ vessel, isLoading, onIdentify }: VesselInfoPan
                 <InfoRow label="Confidence" value={vessel.anomaly.confidence != null ? `${(vessel.anomaly.confidence * 100).toFixed(1)}%` : undefined} />
                 <InfoRow label="Classification" value={statusLabel} />
             </div>
-
-            {/* Specifications (only if available) */}
-            {(vessel.length || vessel.width) && (
-                <>
-                    <Separator className="my-4" />
-                    <div className="px-5 space-y-1">
-                        <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">Specifications</h4>
-                        <InfoRow label="Length" value={vessel.length ? `${vessel.length.toFixed(0)} m` : undefined} />
-                        <InfoRow label="Width" value={vessel.width ? `${vessel.width.toFixed(0)} m` : undefined} />
-                    </div>
-                </>
-            )}
 
             {vessel.imageName && (
                 <>

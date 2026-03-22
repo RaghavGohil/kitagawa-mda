@@ -12,10 +12,10 @@ interface AISTrack {
     centerIdx?: number;
 }
 
-const getVesselIcon = (color: string, isSelected: boolean) => L.divIcon({
+const getVesselIcon = (color: string, isSelected: boolean, rotation: number = 0) => L.divIcon({
     className: "custom-vessel-icon",
     html: `
-        <div style="position: relative; width: 30px; height: 30px;">
+        <div style="position: relative; width: 30px; height: 30px; transform: rotate(${rotation}deg);">
             <svg width="30" height="30" viewBox="-10 -10 120 120" style="cursor: pointer;">
                 <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${isSelected ? 0.95 : 0.8}" stroke="${color}" stroke-width="${isSelected ? 8 : 4}" />
             </svg>
@@ -67,7 +67,7 @@ export const AISTrackLayer = ({
         const time_end = new Date(roundedTimeMs + 24 * 60 * 60 * 1000).toISOString();
         const mmsisStr = Array.from(new Set(correlatedVessels.map(v => v.mmsi))).join(",");
 
-        const paramsStr = `${bounds.toBBoxString()}-${zoom}-${time_start}-${time_end}-${mmsisStr}`;
+        const paramsStr = `${bounds.toBBoxString()}-${zoom}-${time_start}-${time_end}`;
         if (paramsStr === lastFetchParams.current) return;
         lastFetchParams.current = paramsStr;
 
@@ -83,10 +83,9 @@ export const AISTrackLayer = ({
                 max_lon: bounds.getEast().toFixed(6),
                 max_lat: bounds.getNorth().toFixed(6),
                 zoom: zoom.toString(),
-                limit: "3000",
+                limit: "1000", // Sufficient for local viewport
                 time_start,
                 time_end,
-                mmsis: mmsisStr,
             });
 
             const url = `${API_BASE_URL}/api/v1/ais/tracks?${params}`;
@@ -130,7 +129,7 @@ export const AISTrackLayer = ({
     // Process tracks to find current vessel position + context points
     const trackVisuals = tracks.map(t => {
         const vessel = vesselMap.get(t.mmsi);
-        const refTime = vessel ? vessel.detectionTime : playbackTime.getTime();
+        const refTime = playbackTime.getTime();
 
         let currentPos: { lat: number, lon: number } | null = null;
         let closestIdx = -1;
@@ -165,20 +164,23 @@ export const AISTrackLayer = ({
 
         if (closestIdx === -1 || !currentPos) return null;
 
+        const currentPoint = t.points[closestIdx] as any;
+        const cog = currentPoint.cog || 0;
+
         // Windowing: 10 points before and 10 points after the reference time
         const startIdx = Math.max(0, closestIdx - 10);
         const endIdx = Math.min(t.points.length, closestIdx + 11);
         const slicedPoints = t.points.slice(startIdx, endIdx);
         const newCenterIdx = closestIdx - startIdx;
 
-        return { mmsi: t.mmsi, points: slicedPoints, centerIdx: newCenterIdx, currentPos, vessel: vessel?.vessel };
+        return { mmsi: t.mmsi, points: slicedPoints, centerIdx: newCenterIdx, currentPos, cog, vessel: vessel?.vessel };
     }).filter(Boolean);
 
     return (
         <>
             {trackVisuals.map((track: any) => (
                 <Fragment key={`track-group-${track.mmsi}`}>
-                    {/* Render the fading trail */}
+                    {/* ... (dots/lines) ... */}
                     {track.points.map((p: any, idx: number) => {
                         const nextP = track.points[idx + 1];
                         const distFromCenter = Math.abs(idx - (track.centerIdx ?? 10));
@@ -217,11 +219,11 @@ export const AISTrackLayer = ({
                     {/* Render the actual ship icon at its historical time-travel position */}
                     <Marker
                         position={[track.currentPos.lat, track.currentPos.lon]}
-                        icon={getVesselIcon("#34d399", String(track.mmsi) === selectedMmsi)}
+                        icon={getVesselIcon("#34d399", String(track.mmsi) === selectedMmsi, track.cog)}
                         eventHandlers={{
                             click: () => {
-                                if (onVesselSelect && track.vessel) {
-                                    onVesselSelect(track.vessel);
+                                if (onVesselSelect) {
+                                    onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: 'ship' });
                                 }
                             }
                         }}
