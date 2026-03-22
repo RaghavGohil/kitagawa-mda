@@ -8,7 +8,8 @@ using PostGIS spatial queries + physics-based CubicHermiteSpline interpolation.
 from __future__ import annotations
 
 import os
-from typing import Optional, Callable, Awaitable
+from datetime import datetime
+from typing import Optional, Callable, Awaitable, List, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -101,39 +102,33 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
         return False
 
     det_id, det_lat, det_lon, det_time = det
-    det_time_utc = pd.to_datetime(det_time, utc=True)
-    det_time_s = int(det_time_utc.to_datetime64().astype(np.int64) // 1_000_000_000)
+    match = await find_best_ais_match(db, det_lat, det_lon, det_time)
 
-    time_tol = pd.Timedelta(minutes=TIME_TOLERANCE_MINUTES)
-    time_min = det_time_utc - time_tol
-    time_max = det_time_utc + time_tol
-
-    # 2. Fetch candidate AIS tracks in the vicinity (buffered box)
-    ais_res = await db.execute(
-        text(
+    if match:
+        mmsi = match["mmsi"]
+        dist = match["dist"]
+        await db.execute(
+            text(
+                """
+                UPDATE detections 
+                SET mmsi = :mmsi, 
+                    correlation_distance_m = :dist, 
+                    classification = 'identified',
+                    custom_name = :name
+                WHERE id = :id
             """
-            SELECT mmsi, timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
-                   COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
-            FROM ais_tracks
-            WHERE timestamp BETWEEN :tmin AND :tmax
-              AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 0.05)
-            ORDER BY mmsi, timestamp
-        """
-        ),
-        {
-            "tmin": time_min.to_pydatetime(),
-            "tmax": time_max.to_pydatetime(),
-            "lat": det_lat,
-            "lon": det_lon,
-        },
-    )
-    ais_rows = ais_res.fetchall()
-    if not ais_rows:
-        # Fallback classification if no match found
+            ),
+            {"mmsi": mmsi, "dist": dist, "name": match["name"], "id": det_id},
+        )
+        await db.commit()
+        return True
+    else:
+        # Fallback classification
         from backend.api.vessels import _get_ais_coverage_dates
         from shared.naming import get_unidentified_name
 
         coverage = await _get_ais_coverage_dates(db)
+        det_time_utc = pd.to_datetime(det_time, utc=True)
         det_date_str = det_time_utc.strftime("%Y-%m-%d")
         has_coverage = coverage.get(det_date_str, False)
         cls_state = "anomaly" if has_coverage else "out_of_coverage"
@@ -148,7 +143,45 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
         await db.commit()
         return False
 
-    # 3. Interpolate and match
+
+async def find_best_ais_match(
+    db: AsyncSession, lat: float, lon: float, dt: datetime
+) -> Optional[dict]:
+    """
+    Find the best AIS match for a given point and time.
+    Returns a dict with {mmsi, dist, name} or None.
+    """
+    det_time_utc = pd.to_datetime(dt, utc=True)
+    det_time_s = int(det_time_utc.to_datetime64().astype(np.int64) // 1_000_000_000)
+
+    time_tol = pd.Timedelta(minutes=TIME_TOLERANCE_MINUTES)
+    time_min = det_time_utc - time_tol
+    time_max = det_time_utc + time_tol
+
+    # 1. Fetch candidate AIS tracks in the vicinity (buffered box)
+    ais_res = await db.execute(
+        text(
+            """
+            SELECT mmsi, timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
+                   COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
+            FROM ais_tracks
+            WHERE timestamp BETWEEN :tmin AND :tmax
+              AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 0.05)
+            ORDER BY mmsi, timestamp
+        """
+        ),
+        {
+            "tmin": time_min.to_pydatetime(),
+            "tmax": time_max.to_pydatetime(),
+            "lat": lat,
+            "lon": lon,
+        },
+    )
+    ais_rows = ais_res.fetchall()
+    if not ais_rows:
+        return None
+
+    # 2. Interpolate and match
     ais_df = pd.DataFrame(
         ais_rows,
         columns=["mmsi", "base_date_time", "latitude", "longitude", "sog", "cog"],
@@ -184,7 +217,7 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
         local_lons = interp["lon"].values[valid_time_idx]
 
         # Calculate distances
-        dists = _geod_distance_m_vec(det_lat, det_lon, local_lats, local_lons)
+        dists = _geod_distance_m_vec(lat, lon, local_lats, local_lons)
         min_idx = np.argmin(dists)
         min_dist = dists[min_idx]
 
@@ -192,45 +225,16 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
             best_dist = min_dist
             best_mmsi = int(mmsi)
 
-    # 4. Final classification and DB update
     if best_mmsi > 0 and best_dist <= 200:
-        await db.execute(
-            text(
-                """
-                UPDATE detections
-                SET mmsi = :mmsi,
-                    correlation_distance_m = :dist,
-                    classification = 'identified',
-                    custom_name = COALESCE(
-                        (SELECT vessel_name FROM ais_vessels WHERE mmsi = :mmsi AND vessel_name IS NOT NULL),
-                        'Vessel ' || CAST(:mmsi AS VARCHAR)
-                    )
-                WHERE id = :id
-            """
-            ),
-            {"mmsi": best_mmsi, "dist": best_dist, "id": det_id},
+        # Get vessel name
+        v_res = await db.execute(
+            text("SELECT vessel_name FROM ais_vessels WHERE mmsi = :mmsi"),
+            {"mmsi": best_mmsi},
         )
-        await db.commit()
-        return True
-    else:
-        # Re-verify classification fallback
-        from backend.api.vessels import _get_ais_coverage_dates
-        from shared.naming import get_unidentified_name
+        v_name = v_res.scalar() or f"Vessel {best_mmsi}"
+        return {"mmsi": best_mmsi, "dist": best_dist, "name": v_name}
 
-        coverage = await _get_ais_coverage_dates(db)
-        det_date_str = det_time_utc.strftime("%Y-%m-%d")
-        has_coverage = coverage.get(det_date_str, False)
-        cls_state = "anomaly" if has_coverage else "out_of_coverage"
-        u_name = get_unidentified_name(det_id)
-
-        await db.execute(
-            text(
-                "UPDATE detections SET classification = :cls, custom_name = :name WHERE id = :id"
-            ),
-            {"cls": cls_state, "name": u_name, "id": det_id},
-        )
-        await db.commit()
-        return False
+    return None
 
 
 # ---------------------------------------------------------------------------

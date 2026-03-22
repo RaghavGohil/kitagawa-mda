@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, Fragment } from "react";
-import { Polyline, CircleMarker, Marker, useMap, useMapEvent } from "react-leaflet";
+import { Tooltip, Polyline, CircleMarker, Marker, useMap, useMapEvent } from "react-leaflet";
 import L from "leaflet";
 import { API_BASE_URL } from "@/lib/api";
 
@@ -92,7 +92,14 @@ export const AISTrackLayer = ({
             const response = await fetch(url, { signal: abortControllerRef.current.signal });
             if (response.ok) {
                 const data = await response.json();
-                setTracks(data.tracks || []);
+                const processedTracks = (data.tracks || []).map((t: any) => ({
+                    ...t,
+                    points: t.points.map((p: any) => ({
+                        ...p,
+                        time: new Date(p.timestamp).getTime()
+                    }))
+                }));
+                setTracks(processedTracks);
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === "AbortError") return;
@@ -137,11 +144,15 @@ export const AISTrackLayer = ({
 
         // 1. Find the best interval for the reference time
         for (let i = 0; i < t.points.length - 1; i++) {
-            const t1 = new Date(t.points[i].timestamp).getTime();
-            const t2 = new Date(t.points[i + 1].timestamp).getTime();
+            const t1 = (t.points[i] as any).time;
+            const t2 = (t.points[i + 1] as any).time;
 
             if (refTime >= t1 && refTime <= t2) {
-                currentPos = interpolate(t.points[i], t.points[i + 1], refTime);
+                const factor = (refTime - t1) / (t2 - t1);
+                currentPos = {
+                    lat: t.points[i].lat + (t.points[i + 1].lat - t.points[i].lat) * factor,
+                    lon: t.points[i].lon + (t.points[i + 1].lon - t.points[i].lon) * factor,
+                };
                 closestIdx = i;
                 break;
             }
@@ -149,8 +160,8 @@ export const AISTrackLayer = ({
 
         // 2. If no perfect interval, find the absolute closest point
         if (!currentPos) {
-            t.points.forEach((p, idx) => {
-                const pTime = new Date(p.timestamp).getTime();
+            t.points.forEach((p: any, idx: number) => {
+                const pTime = p.time;
                 const diff = Math.abs(pTime - refTime);
                 if (diff < minDiff) {
                     minDiff = diff;
@@ -190,16 +201,16 @@ export const AISTrackLayer = ({
                         }}
                     />
 
-                    {/* Render sparse dots for texture - fewer points = better performance */}
-                    {track.points.filter((_: any, i: number) => i % 4 === 0).map((p: any, idx: number) => (
+                    {/* Render dots at every single data point for maximum detail */}
+                    {track.points.map((p: any, idx: number) => (
                         <CircleMarker
                             key={`ais-dot-${track.mmsi}-${idx}`}
                             center={[p.lat, p.lon]}
-                            radius={1.2}
+                            radius={1.0}
                             pathOptions={{
                                 color: "#34d399",
                                 fillColor: "#34d399",
-                                fillOpacity: 0.5,
+                                fillOpacity: 0.4,
                                 stroke: false,
                                 interactive: false,
                             }}
@@ -213,11 +224,23 @@ export const AISTrackLayer = ({
                         eventHandlers={{
                             click: () => {
                                 if (onVesselSelect) {
-                                    onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: 'ship' });
+                                    onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: "ship" });
                                 }
                             }
                         }}
-                    />
+                    >
+                        <Tooltip
+                            permanent
+                            direction="top"
+                            offset={[0, -15]}
+                            className="vessel-name-tooltip"
+                            interactive
+                        >
+                            <span className="font-mono text-[10px] font-bold text-[#34d399] drop-shadow-md">
+                                {track.vessel?.name || `MMSI: ${track.mmsi}`}
+                            </span>
+                        </Tooltip>
+                    </Marker>
                 </Fragment>
             ))}
         </>

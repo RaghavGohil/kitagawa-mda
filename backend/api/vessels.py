@@ -213,43 +213,35 @@ async def get_vessels(
         for ar in ais_result.fetchall():
             ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
 
-    # --- AUTO-CORRELATION ON SEEK ---
-    # If we have unidentified detections, attempt a live strict correlation
-    unidentified_ids = [int(r[0]) for r in rows if not r[9]]
-    if unidentified_ids:
-        from backend.services.correlation import correlate_single_detection
+    # --- AUTO-CORRELATION ON SEEK (EPHEMERAL) ---
+    indices_to_match = [i for i, r in enumerate(rows) if not r[9]]  # real_mmsi is r[9]
+    if indices_to_match:
+        from backend.services.correlation import find_best_ais_match
 
-        # Correlate in parallel (limit to 20 per request to keep it fast)
-        tasks = [
-            correlate_single_detection(db, det_id) for det_id in unidentified_ids[:20]
-        ]
-        await asyncio.gather(*tasks)
+        # Correlate in parallel for better performance
+        async def wrap_match(idx):
+            r = rows[idx]
+            match = await find_best_ais_match(db, r[4], r[5], r[3])
+            return idx, match
 
-        # After correlation, we need to refresh the 'mmsi' and 'dist' for these rows
-        # because the database was updated but our 'rows' variable is stale.
-        # For simplicity and speed in this request, we'll just re-fetch the mmsi
-        # if a match was made, OR we could just re-run the whole query.
-        # Better: Re-fetch only the mmsi columns for the updated IDs.
-        refreshed_res = await db.execute(
-            text(
-                "SELECT id, mmsi, correlation_distance_m, classification FROM detections WHERE id = ANY(:ids)"
-            ),
-            {"ids": unidentified_ids},
-        )
-        refresh_map = {r[0]: (r[1], r[2], r[3]) for r in refreshed_res.fetchall()}
+        tasks = [wrap_match(i) for i in indices_to_match[:50]]  # Cap at 50 for speed
+        matches = await asyncio.gather(*tasks)
+        match_results = {idx: m for idx, m in matches}
     else:
-        refresh_map = {}
+        match_results = {}
 
     vessels = []
-    for r in rows:
-        det_id = int(r[0])
-        # Use refreshed values if available
-        if det_id in refresh_map:
-            real_mmsi, avg_dist, db_cls = refresh_map[det_id]
-            real_mmsi = int(real_mmsi) if real_mmsi else 0
+    for i, r in enumerate(rows):
+        res_match = match_results.get(i)
+        if res_match:
+            real_mmsi = res_match["mmsi"]
+            avg_dist = res_match["dist"]
+            display_name = res_match["name"]
+            db_cls = "identified"
         else:
             real_mmsi = int(r[9]) if r[9] else 0
             avg_dist = float(r[7]) if r[7] is not None else None
+            display_name = r[8]
             db_cls = r[10]
 
         last_seen_str = r[3].isoformat() if r[3] else None
@@ -264,8 +256,8 @@ async def get_vessels(
             {
                 "mmsi": real_mmsi,
                 "v_id": r[0],
-                "name": r[8]
-                if r[8]
+                "name": display_name
+                if display_name
                 else (
                     f"Vessel {real_mmsi}"
                     if real_mmsi > 0
@@ -413,22 +405,37 @@ async def get_vessel(
         for p in ais_rows
     ]
 
+    # --- EPHEMERAL CORRELATION FOR DETAIL ---
+    final_mmsi = mmsi_val if not is_unidentified else 0
+    final_name = det_rows[0][9] if (det_rows and det_rows[0][9]) else None
+    final_dist = det_rows[0][5] if det_rows else None
+
+    if is_unidentified and det_rows:
+        from backend.services.correlation import find_best_ais_match
+
+        # Try to match the most recent detection
+        r0 = det_rows[0]
+        match = await find_best_ais_match(db, r0[6], r0[7], r0[4])
+        if match:
+            final_mmsi = match["mmsi"]
+            final_dist = match["dist"]
+            final_name = match["name"]
+            anomaly_type = "identified"
+
     # Fetch rich metadata from ais_vessels
     vessel_meta_res = await db.execute(
         text("SELECT * FROM ais_vessels WHERE mmsi = :mmsi"),
-        {"mmsi": mmsi_val if not is_unidentified else 0},
+        {"mmsi": final_mmsi},
     )
     v_row = vessel_meta_res.fetchone()
     v_meta = dict(v_row._mapping) if v_row else {}
 
     return {
-        "mmsi": mmsi_val if not is_unidentified else 0,
+        "mmsi": final_mmsi,
         "v_id": mmsi,
-        "name": det_rows[0][9]
-        if (det_rows and det_rows[0][9])
-        else (
-            f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"
-        ),
+        "name": final_name
+        if final_name
+        else (f"Vessel {final_mmsi}" if final_mmsi > 0 else f"Unidentified {mmsi_val}"),
         "imo": v_meta.get("imo"),
         "callSign": v_meta.get("callsign"),
         "length": v_meta.get("length"),
