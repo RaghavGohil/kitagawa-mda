@@ -33,7 +33,7 @@ async def get_ais_tracks(
     time_end: Optional[str] = Query(None, description="ISO timestamp end"),
     mmsis: Optional[str] = Query(None, description="Comma-separated list of MMSIs"),
     zoom: int = Query(10, ge=1, le=22),
-    limit: int = Query(500, ge=1, le=2000, description="Max number of MMSIs"),
+    limit: int = Query(500, ge=1, le=10000, description="Max number of MMSIs"),
     db: AsyncSession = Depends(get_db),
 ):
     """

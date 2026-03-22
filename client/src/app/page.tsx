@@ -72,14 +72,14 @@ export default function DashboardPage() {
   }, []);
 
   // ===================== DATA =====================
-  // Updated Dynamic vessel limit: more ships visible at higher zoom
+  // More aggressive dynamic vessel limit: ensure global and local completeness
   const vesselLimit = useMemo(() => {
-    if (!mapZoom) return 500;
-    if (mapZoom >= 15) return 5000;
-    if (mapZoom >= 12) return 2000;
-    if (mapZoom >= 8) return 1000;
-    if (mapZoom >= 5) return 500;
-    return 200;
+    if (!mapZoom) return 1000;
+    if (mapZoom >= 15) return 20000;
+    if (mapZoom >= 12) return 10000;
+    if (mapZoom >= 8) return 5000;
+    if (mapZoom >= 5) return 2000;
+    return 1000;
   }, [mapZoom]);
 
   const { data: vesselData, isLoading: isLoadingVessels } = useVessels({

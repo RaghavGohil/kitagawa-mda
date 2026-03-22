@@ -118,7 +118,7 @@ async def get_vessels(
     zoom: int = Query(10, ge=1, le=22),
     anomaly_only: bool = Query(False),
     satellite_type: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int = Query(200, ge=1, le=20000),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -163,6 +163,12 @@ async def get_vessels(
     # Landmask filter: exclude detections flagged as being on land
     landmask_filter = "(fp_flags IS NULL OR fp_flags NOT LIKE '%land%')"
 
+    # Dynamic grid size for grouping based on zoom
+    # z >= 15: ~1m (effectively no grouping)
+    # z >= 8: ~10m
+    # z < 8: ~50m
+    grid_size = 0.00001 if zoom >= 15 else 0.0001 if zoom >= 8 else 0.0005
+
     # Simplified query — leverages stored classification
     sql = text(f"""
         SELECT
@@ -181,10 +187,11 @@ async def get_vessels(
         WHERE {where_str} AND {landmask_filter}
         GROUP BY
             mmsi,
-            CASE WHEN mmsi IS NULL THEN ST_SnapToGrid(geom, 0.0005) ELSE NULL END
+            CASE WHEN mmsi IS NULL THEN ST_SnapToGrid(geom, :grid_size) ELSE NULL END
         ORDER BY last_seen DESC
         LIMIT :limit
     """)
+    params["grid_size"] = grid_size
 
     result = await db.execute(sql, params)
     rows = result.fetchall()
