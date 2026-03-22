@@ -97,7 +97,7 @@ def _classify_vessel(
     if db_classification and db_classification in _CLASSIFICATION_COLORS:
         return db_classification
 
-    if mmsi and mmsi > 0 and correlation_dist is not None and correlation_dist <= 500:
+    if mmsi and mmsi > 0 and correlation_dist is not None and correlation_dist <= 200:
         return "identified"
 
     # Unidentified or bad match — check AIS coverage

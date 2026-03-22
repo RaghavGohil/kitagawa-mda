@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Config
 # ---------------------------------------------------------------------------
 INTERP_SECONDS = 120  # 2-minute interpolation step
-TIME_TOLERANCE_MINUTES = 10
-LOCATION_TOLERANCE_METERS = 1200
+TIME_TOLERANCE_MINUTES = 2
+LOCATION_TOLERANCE_METERS = 200
 BATCH_TRACKS = 200
 MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
@@ -222,7 +222,7 @@ async def run_correlation(
         det_date_str = det_times[i].strftime("%Y-%m-%d")
         has_coverage = coverage.get(det_date_str, False)
 
-        if mmsi != 0 and dist <= 500:
+        if mmsi != 0 and dist <= 200:
             cls_state = "identified"
             await db.execute(
                 text("""
@@ -448,30 +448,8 @@ def _match_batch(
             local_min = int(np.argmin(dists))
             local_min_dist = float(dists[local_min])
 
-            # Pass 1: Strict Match (Confidence)
             if local_min_dist <= loc_tol_m and local_min_dist < current_best_dist[di]:
                 current_best_dist[di] = local_min_dist
                 current_best_mmsi[di] = mmsi
-
-            # Pass 2: Fallback Broad Match (Proximity)
-            # If we don't have a strict match yet, but this is within 5km and is currently the best
-            elif (
-                current_best_dist[di] > loc_tol_m
-                and local_min_dist < 5000
-                and local_min_dist < current_best_dist[di]
-            ):
-                current_best_dist[di] = local_min_dist
-                current_best_mmsi[di] = mmsi
-                if di % 100 == 0:
-                    print(
-                        f"[Correlation] Proximity Match: Det {di} -> MMSI {mmsi} ({local_min_dist:.1f}m)"
-                    )
-
-            elif local_min_dist < 10000 and local_min_dist < current_best_dist[di]:
-                # Log near misses for debugging if under 10km
-                if di % 100 == 0:
-                    print(
-                        f"[Correlation] NEAR MISS: Det {di} is {local_min_dist:.1f}m from MMSI {mmsi}"
-                    )
 
     return current_best_dist, current_best_mmsi
