@@ -212,12 +212,46 @@ async def get_vessels(
         for ar in ais_result.fetchall():
             ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
 
+    # --- AUTO-CORRELATION ON SEEK ---
+    # If we have unidentified detections, attempt a live strict correlation
+    unidentified_ids = [int(r[0]) for r in rows if not r[9]]
+    if unidentified_ids:
+        from backend.services.correlation import correlate_single_detection
+
+        # Correlate in parallel (limit to 20 per request to keep it fast)
+        tasks = [
+            correlate_single_detection(db, det_id) for det_id in unidentified_ids[:20]
+        ]
+        await asyncio.gather(*tasks)
+
+        # After correlation, we need to refresh the 'mmsi' and 'dist' for these rows
+        # because the database was updated but our 'rows' variable is stale.
+        # For simplicity and speed in this request, we'll just re-fetch the mmsi
+        # if a match was made, OR we could just re-run the whole query.
+        # Better: Re-fetch only the mmsi columns for the updated IDs.
+        refreshed_res = await db.execute(
+            text(
+                "SELECT id, mmsi, correlation_distance_m, classification FROM detections WHERE id = ANY(:ids)"
+            ),
+            {"ids": unidentified_ids},
+        )
+        refresh_map = {r[0]: (r[1], r[2], r[3]) for r in refreshed_res.fetchall()}
+    else:
+        refresh_map = {}
+
     vessels = []
     for r in rows:
-        real_mmsi = int(r[9]) if r[9] else 0
+        det_id = int(r[0])
+        # Use refreshed values if available
+        if det_id in refresh_map:
+            real_mmsi, avg_dist, db_cls = refresh_map[det_id]
+            real_mmsi = int(real_mmsi) if real_mmsi else 0
+        else:
+            real_mmsi = int(r[9]) if r[9] else 0
+            avg_dist = float(r[7]) if r[7] is not None else None
+            db_cls = r[10]
+
         last_seen_str = r[3].isoformat() if r[3] else None
-        avg_dist = float(r[7]) if r[7] is not None else None
-        db_cls = r[10]
 
         anomaly_type = _classify_vessel(
             real_mmsi, avg_dist, last_seen_str, coverage, db_classification=db_cls
