@@ -110,17 +110,15 @@ async def live_ais_websocket(websocket: WebSocket):
     try:
         while True:
             # Check for incoming subscription updates from the client
-            try:
-                data = await websocket.receive_json()
-                if data.get("type") == "subscribe":
-                    bbox = data.get("bbox")
-                    if bbox:
-                        await set_active_bboxes(bbox)
-            except Exception:
-                # Handle non-JSON or other message errors gracefully
-                await asyncio.sleep(0.1)
-
-    except (WebSocketDisconnect, Exception):
+            # The receive_json() call also serves to detect client disconnection
+            data = await websocket.receive_json()
+            if data.get("type") == "subscribe":
+                bbox = data.get("bbox")
+                if bbox:
+                    await set_active_bboxes(bbox)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
         pass
     finally:
         unsubscribe(queue)

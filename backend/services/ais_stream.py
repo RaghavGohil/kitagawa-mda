@@ -140,13 +140,9 @@ def stop():
 
 async def _run_loop():
     """Main ingestion loop with automatic reconnection and Area Tuning."""
-    # Use broad, stable bounding boxes (split into 4 quadrants to avoid area limit issues)
-    _state.current_bboxes = [
-        [[-90, -180], [0, 0]],
-        [[-90, 0], [0, 180]],
-        [[0, -180], [90, 0]],
-        [[0, 0], [90, 180]],
-    ]
+    # Use a stable, high-traffic default area (Singapore) to avoid area-limit kicks.
+    # Total area: ~6,000 km² (Limit is 100,000 km² for standard keys)
+    _state.current_bboxes = [[[1.0, 103.5], [1.5, 104.5]]]
 
     if AISSTREAM_BBOX:
         try:
@@ -247,11 +243,12 @@ async def _connect_and_ingest():
                             websockets.exceptions.ConnectionClosed,
                             websockets.exceptions.WebSocketException,
                         ) as e:
-                            print(f"[AIS Stream] WebSocket connection closed: {e}")
-                            return  # Trigger reconnection in the outer loop
+                            err_msg = f"External WebSocket closed: {e}"
+                            print(f"[AIS Stream] {err_msg}")
+                            _state._last_errors.append(err_msg)
+                            return  # Reconnect
                         except Exception as e:
-                            print(f"[AIS Stream] Message handling error: {e}")
-                            # Recreate even on error to keep loop alive for transient errors
+                            print(f"[AIS Stream] Message error: {e}")
                             recv_task = asyncio.create_task(ws.recv())
                             active_tasks.add(recv_task)
 

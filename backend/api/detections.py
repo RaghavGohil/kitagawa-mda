@@ -26,26 +26,25 @@ async def get_detections(
     min_lat: float = Query(..., description="Bounding box min latitude"),
     max_lon: float = Query(..., description="Bounding box max longitude"),
     max_lat: float = Query(..., description="Bounding box max latitude"),
-    zoom: int = Query(10, ge=1, le=22, description="Map zoom level"),
+    zoom: float = Query(10, ge=1, le=22, description="Map zoom level"),
     sensor_type: Optional[str] = Query(None, description="Filter by SAR or EO"),
     limit: int = Query(1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
 ):
+    zoom = int(zoom)
     """
     Get detections within a bounding box.
 
     At zoom < 10: returns clustered centroids for performance.
     At zoom >= 10: returns individual detections.
     """
-    bbox_filter = (
-        "ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))"
-    )
+    bbox_filter = "ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))"
     sensor_filter = "AND sensor_type = :sensor" if sensor_type else ""
 
     if zoom < 10:
         # Cluster detections using grid-based snapping
         # Grid cell size decreases with zoom level
-        cell_size = 360.0 / (2 ** zoom)
+        cell_size = 360.0 / (2**zoom)
         sql = text(f"""
             SELECT
                 COUNT(*) AS count,
@@ -64,9 +63,12 @@ async def get_detections(
             LIMIT :limit
         """)
         params = {
-            "min_lon": min_lon, "min_lat": min_lat,
-            "max_lon": max_lon, "max_lat": max_lat,
-            "cell_size": cell_size, "limit": limit,
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
+            "cell_size": cell_size,
+            "limit": limit,
         }
         if sensor_type:
             params["sensor"] = sensor_type
@@ -82,8 +84,12 @@ async def get_detections(
                     "count": r[0],
                     "center_lat": round(r[1], 6),
                     "center_lon": round(r[2], 6),
-                    "bbox": [round(r[4], 6), round(r[3], 6),
-                             round(r[6], 6), round(r[5], 6)],
+                    "bbox": [
+                        round(r[4], 6),
+                        round(r[3], 6),
+                        round(r[6], 6),
+                        round(r[5], 6),
+                    ],
                 }
                 for r in rows
             ],
@@ -102,8 +108,10 @@ async def get_detections(
             LIMIT :limit
         """)
         params = {
-            "min_lon": min_lon, "min_lat": min_lat,
-            "max_lon": max_lon, "max_lat": max_lat,
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
             "limit": limit,
         }
         if sensor_type:
@@ -112,7 +120,7 @@ async def get_detections(
         result = await db.execute(sql, params)
         rows = result.fetchall()
 
-        # Simple deduplication: if detections are within 0.0001 (approx 10m) of each other, 
+        # Simple deduplication: if detections are within 0.0001 (approx 10m) of each other,
         # keep only the highest confidence one.
         detections = []
         for r in rows:
@@ -127,17 +135,20 @@ async def get_detections(
                 "lon": round(r[7], 6),
                 "pixel_bbox": [r[8], r[9], r[10], r[11]],
             }
-            
+
             # Check if this detection overlaps significantly with an already added one
             is_duplicate = False
             for existing in detections:
-                if abs(existing["lat"] - det["lat"]) < 0.0001 and abs(existing["lon"] - det["lon"]) < 0.0001:
+                if (
+                    abs(existing["lat"] - det["lat"]) < 0.0001
+                    and abs(existing["lon"] - det["lon"]) < 0.0001
+                ):
                     # If same image, it's definitely a duplicate or very close
                     # If different images, it's a correlation that could be merged or hidden
                     if det["image_name"] == existing["image_name"]:
                         is_duplicate = True
                         break
-            
+
             if not is_duplicate:
                 detections.append(det)
 
@@ -173,11 +184,13 @@ async def get_detection(
     r = result.fetchone()
     if not r:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Detection not found")
 
     chip_url = ""
     if r[16]:  # minio_key
         from backend.services.chips import get_chip_url
+
         chip_url = get_chip_url(r[16])
 
     return {
@@ -222,8 +235,10 @@ async def get_detections_geojson(
         LIMIT :limit
     """)
     params = {
-        "min_lon": min_lon, "min_lat": min_lat,
-        "max_lon": max_lon, "max_lat": max_lat,
+        "min_lon": min_lon,
+        "min_lat": min_lat,
+        "max_lon": max_lon,
+        "max_lat": max_lat,
         "limit": limit,
     }
     if sensor_type:
@@ -234,17 +249,19 @@ async def get_detections_geojson(
 
     features = []
     for r in rows:
-        features.append({
-            "type": "Feature",
-            "geometry": r[5],
-            "properties": {
-                "id": r[0],
-                "image_name": r[1],
-                "sensor_type": r[2],
-                "confidence": round(r[3], 4),
-                "mmsi": r[4],
-            },
-        })
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": r[5],
+                "properties": {
+                    "id": r[0],
+                    "image_name": r[1],
+                    "sensor_type": r[2],
+                    "confidence": round(r[3], 4),
+                    "mmsi": r[4],
+                },
+            }
+        )
 
     return {
         "type": "FeatureCollection",

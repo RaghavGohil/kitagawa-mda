@@ -35,7 +35,13 @@ export const VesselMarker = ({
     if (ageMs < -5 * 60 * 1000 || ageMs > timeRangeMs) return null;
 
     // Color Logic — use backend-authoritative color for detected vessels
-    // Live AIS vessels are always emerald green (they don't pass through classification)
+    // If a vessel has an MMSI and we are showing tracks/ships, the AISTrackLayer 
+    // handles the high-fidelity ship icon and name tag. We hide this marker 
+    // to avoid redundancy and 'ghost' markers.
+    // Hiding logic removed: we now let VesselMarker always handle the 'Current Position' icon
+    // to avoid vessels vanishing during live-to-database transitions.
+    // if (showTrack && vessel.mmsi && parseInt(vessel.mmsi) > 0) return null;
+
     let color: string;
     if (isLive) {
         color = "#10b981"; // Emerald Green for Live AIS
@@ -44,7 +50,7 @@ export const VesselMarker = ({
         color = vessel.color ?? (
             vessel.anomaly.type === "identified" ? "#10b981" :
                 vessel.anomaly.type === "anomaly" ? "#ef4444" :
-                    "#6b7280"
+                    "#475569" // Muted Slate-500 for unidentified (less distracting than light gray)
         );
     }
 
@@ -63,7 +69,7 @@ export const VesselMarker = ({
         <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.8) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
       </svg>`
         : `<svg width="${size}" height="${size}" viewBox="0 0 100 100" style="cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
-        <circle cx="50" cy="50" r="${isSelected ? 33 : 24}" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.7) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
+        <circle cx="50" cy="50" r="${isSelected ? 24 : 12}" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.5) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
       </svg>`;
 
     const icon = L.divIcon({
@@ -73,7 +79,7 @@ export const VesselMarker = ({
         html: `
       <div style="position: relative; width: ${size}px; height: ${size}px;">
         ${svgContent}
-        <div style="opacity: ${labelOpacity}; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1); pointer-events: none; white-space: nowrap; margin-top: 10px; transition: opacity 0.2s ease-in-out; color: ${color};">
+        <div style="opacity: ${labelOpacity}; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1); pointer-events: none; white-space: nowrap; margin-bottom: 10px; transition: opacity 0.2s ease-in-out; color: ${color};">
           ${vessel.name}
         </div>
       </div>

@@ -32,10 +32,11 @@ async def get_ais_tracks(
     time_start: Optional[str] = Query(None, description="ISO timestamp start"),
     time_end: Optional[str] = Query(None, description="ISO timestamp end"),
     mmsis: Optional[str] = Query(None, description="Comma-separated list of MMSIs"),
-    zoom: int = Query(10, ge=1, le=22),
-    limit: int = Query(500, ge=1, le=10000, description="Max number of MMSIs"),
+    zoom: float = Query(10, ge=1, le=22),
+    limit: int = Query(2000, ge=1, le=10000, description="Max number of MMSIs"),
     db: AsyncSession = Depends(get_db),
 ):
+    zoom = int(zoom)
     """
     Get AIS tracks within a bounding box and optional time range.
 
@@ -59,14 +60,66 @@ async def get_ais_tracks(
         if mmsi_list_parsed:
             mmsi_filter_sql = " AND mmsi = ANY(:mmsis_arr)"
 
-    # First, find distinct MMSIs in the area
-    mmsi_sql = text(f"""
-        SELECT DISTINCT mmsi
-        FROM ais_tracks
-        WHERE ST_Intersects(
-            geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-        ) {time_filter} {mmsi_filter_sql}
-        LIMIT :limit
+    # Tolerance for point simplification based on zoom
+    tolerance = 0.1 / (2 ** (max(1, zoom - 1)))
+
+    # Dynamic point limit based on zoom to prevent massive payloads at low zoom
+    # z=1-5: 20 pts, z=6-10: 50 pts, z=11-15: 100 pts, z>15: 200 pts
+    point_limit = 20
+    if zoom > 5:
+        point_limit = 50
+    if zoom > 10:
+        point_limit = 100
+    if zoom > 15:
+        point_limit = 200
+
+    # Grid-based sampling for "Representative Ships" at low zoom
+    # This prevents UI lag by picking 1 real vessel per grid cell
+    representative_sql = ""
+    if zoom < 12:
+        # Cell size in degrees. z=3: ~2deg, z=11: ~0.01deg
+        cell_size = 180.0 / (2**zoom)
+        representative_sql = f"DISTINCT ON (ST_SnapToGrid(geom, {cell_size}))"
+        # Since we use DISTINCT ON, we need an ORDER BY that matches
+        mmsi_order_sql = f"ORDER BY ST_SnapToGrid(geom, {cell_size}), timestamp DESC"
+    else:
+        mmsi_order_sql = "ORDER BY timestamp DESC"
+
+    # Optimized single query using LATERAL join for "Top-N per group" performance
+    # target_mmsis uses grid-based sampling at low zoom to pick representatives
+    sql = text(f"""
+        WITH target_mmsis AS (
+            SELECT {representative_sql} mmsi
+            FROM ais_tracks
+            WHERE ST_Intersects(
+                geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+            ) {time_filter} {mmsi_filter_sql}
+            {mmsi_order_sql}
+            LIMIT :limit
+        )
+        SELECT
+            m.mmsi,
+            jsonb_agg(
+                jsonb_build_object(
+                    'timestamp', t.timestamp,
+                    'lat', ROUND(ST_Y(ST_SnapToGrid(t.geom, :tolerance))::numeric, 6),
+                    'lon', ROUND(ST_X(ST_SnapToGrid(t.geom, :tolerance))::numeric, 6),
+                    'sog', ROUND(COALESCE(t.sog, 0)::numeric, 2),
+                    'cog', ROUND(COALESCE(t.cog, 0)::numeric, 2)
+                ) ORDER BY t.timestamp
+            ) AS points
+        FROM target_mmsis m
+        CROSS JOIN LATERAL (
+            SELECT timestamp, geom, sog, cog
+            FROM ais_tracks
+            WHERE mmsi = m.mmsi
+              AND ST_Intersects(
+                  geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+              ) {time_filter}
+            ORDER BY timestamp DESC
+            LIMIT :point_limit
+        ) t
+        GROUP BY m.mmsi
     """)
 
     params = {
@@ -74,7 +127,9 @@ async def get_ais_tracks(
         "min_lat": min_lat,
         "max_lon": max_lon,
         "max_lat": max_lat,
+        "tolerance": tolerance,
         "limit": effective_limit,
+        "point_limit": point_limit,
     }
     if mmsis and mmsi_list_parsed:
         params["mmsis_arr"] = mmsi_list_parsed
@@ -84,71 +139,32 @@ async def get_ais_tracks(
         params["time_end"] = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
 
     print(
-        f"[AIS] Querying tracks: limit={effective_limit}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})"
+        f"[AIS] Lateral Query: limit={effective_limit}, zoom={zoom}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})"
     )
-    if time_start:
-        print(f"[AIS] Time window: {time_start} to {time_end}")
 
-    result = await db.execute(mmsi_sql, params)
-    mmsi_list = [r[0] for r in result.fetchall()]
-    print(f"[AIS] Found {len(mmsi_list)} vessels in area.")
+    result = await db.execute(sql, params)
+    rows = result.fetchall()
 
-    if not mmsi_list:
-        return {"tracks": []}
-
-    # For each MMSI, get the track points
     tracks = []
-    for mmsi in mmsi_list:
-        track_sql = text(f"""
-            SELECT
-                timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
-                COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
-            FROM ais_tracks
-            WHERE mmsi = :mmsi {time_filter}
-            ORDER BY timestamp
-        """)
+    for r in rows:
+        # Deduplicate points that snapped to the same grid location
+        seen_coords = set()
+        unique_points = []
+        for p in r[1]:
+            coord = (p["lat"], p["lon"])
+            if coord not in seen_coords:
+                unique_points.append(p)
+                seen_coords.add(coord)
 
-        track_params = {"mmsi": mmsi}
-        if time_start:
-            track_params["time_start"] = datetime.fromisoformat(
-                time_start.replace("Z", "+00:00")
-            )
-        if time_end:
-            track_params["time_end"] = datetime.fromisoformat(
-                time_end.replace("Z", "+00:00")
-            )
-
-        track_result = await db.execute(track_sql, track_params)
-        points = track_result.fetchall()
-
-        if not points:
-            continue
-
-        # Show all points as requested ("remove the zoom based logic because i want to see all ships")
         tracks.append(
             {
-                "mmsi": mmsi,
-                "point_count": len(points),
-                "points": [
-                    {
-                        "timestamp": p[0].isoformat() if p[0] else None,
-                        "lat": round(p[1], 6)
-                        if p[1] is not None and math.isfinite(p[1])
-                        else 0.0,
-                        "lon": round(p[2], 6)
-                        if p[2] is not None and math.isfinite(p[2])
-                        else 0.0,
-                        "sog": round(p[3], 2)
-                        if p[3] is not None and math.isfinite(p[3])
-                        else 0.0,
-                        "cog": round(p[4], 2)
-                        if p[4] is not None and math.isfinite(p[4])
-                        else 0.0,
-                    }
-                    for p in points
-                ],
+                "mmsi": r[0],
+                "point_count": len(unique_points),
+                "points": unique_points,
             }
         )
+
+    return {"tracks": tracks, "total_vessels": len(tracks)}
 
     return {"tracks": tracks, "total_vessels": len(tracks)}
 

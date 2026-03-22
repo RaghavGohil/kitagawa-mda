@@ -69,39 +69,10 @@ export const CoverageLayer = ({ show, days = 30 }: CoverageLayerProps) => {
                         : intensity > 0.3
                             ? "#38bdf8"   // Sky blue — medium
                             : "#2563eb",  // Dark blue — low density
-                    fillOpacity: 0.15 + intensity * 0.25,
+                    fillOpacity: 0.05 + intensity * 0.1,
                     weight: 1,
-                    interactive: true,
+                    interactive: false,
                 });
-
-                polygon.on("mouseover", (e) => {
-                    const layer = e.target;
-                    layer.setStyle({
-                        fillOpacity: 0.6,
-                        color: "#67e8f9",
-                        weight: 1,
-                    });
-                });
-
-                polygon.on("mouseout", (e) => {
-                    const layer = e.target;
-                    layer.setStyle({
-                        fillOpacity: 0.15 + intensity * 0.25,
-                        color: "transparent",
-                        weight: 1,
-                    });
-                });
-
-                polygon.on("click", (e) => {
-                    map.fitBounds(e.target.getBounds(), { padding: [50, 50] });
-                });
-
-                polygon.bindTooltip(
-                    `<strong>AIS Reception Density</strong><br/>` +
-                    `Vessels seen: ${cell.properties.vessel_count}<br/>` +
-                    `<span class="text-xs opacity-70">Click to zoom into this sector</span>`,
-                    { sticky: true, className: "custom-tooltip", direction: "top" }
-                );
 
                 layerGroup.addLayer(polygon);
             });

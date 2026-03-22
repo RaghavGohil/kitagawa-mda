@@ -151,7 +151,11 @@ async def find_best_ais_match(
     Find the best AIS match for a given point and time.
     Returns a dict with {mmsi, dist, name} or None.
     """
+    if dt is None:
+        return None
     det_time_utc = pd.to_datetime(dt, utc=True)
+    if pd.isna(det_time_utc):
+        return None
     det_time_s = int(det_time_utc.to_datetime64().astype(np.int64) // 1_000_000_000)
 
     time_tol = pd.Timedelta(minutes=TIME_TOLERANCE_MINUTES)
@@ -232,7 +236,7 @@ async def find_best_ais_match(
             {"mmsi": best_mmsi},
         )
         v_name = v_res.scalar() or f"Vessel {best_mmsi}"
-        return {"mmsi": best_mmsi, "dist": best_dist, "name": v_name}
+        return {"mmsi": int(best_mmsi), "dist": float(best_dist), "name": str(v_name)}
 
     return None
 

@@ -22,58 +22,78 @@ export const LiveAISLayer = ({ onUpdate }: LiveAISLayerProps) => {
     const map = useMap();
     const socketRef = useRef<WebSocket | null>(null);
     const bufferRef = useRef<Record<number, LiveVessel>>({});
+    const reconnectCountRef = useRef(0);
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
-        const apiUrl = API_BASE_URL;
-        // Convert http(s) to ws(s)
-        const wsProtocol = apiUrl.startsWith("https") ? "wss:" : "ws:";
-        const wsHost = apiUrl.replace(/^https?:\/\//, "");
+        let isMounted = true;
 
-        const socket = new WebSocket(`${wsProtocol}//${wsHost}/api/v1/ais/live/ws`);
-        socketRef.current = socket;
+        const connect = () => {
+            if (!isMounted) return;
 
-        console.log(`[LiveAIS] Attempting connection to: ${wsProtocol}//${wsHost}/api/v1/ais/live/ws`);
+            const apiUrl = API_BASE_URL;
+            // Convert http(s) to ws(s)
+            const wsProtocol = apiUrl.startsWith("https") ? "wss:" : "ws:";
+            const wsHost = apiUrl.replace(/^https?:\/\//, "");
+            const wsUrl = `${wsProtocol}//${wsHost}/api/v1/ais/live/ws`;
 
-        socket.onopen = () => {
-            console.log("[LiveAIS] WebSocket Connected");
-        };
+            console.log(`[LiveAIS] Connecting to: ${wsUrl}`);
+            const socket = new WebSocket(wsUrl);
+            socketRef.current = socket;
 
-        socket.onmessage = (event) => {
-            try {
-                const data: LiveVessel = JSON.parse(event.data);
+            socket.onopen = () => {
+                console.log("[LiveAIS] WebSocket Connected");
+                reconnectCountRef.current = 0; // Reset on success
+            };
 
-                // Throttled log for debugging
-                if (Math.random() < 0.05) {
-                    console.log(`[LiveAIS] Received update for MMSI ${data.mmsi}`);
+            socket.onmessage = (event) => {
+                try {
+                    const data: LiveVessel = JSON.parse(event.data);
+                    // Geographic Pre-filtering: Only buffer if within current view
+                    const bounds = map.getBounds();
+                    if (bounds.contains([data.lat, data.lon])) {
+                        bufferRef.current[data.mmsi] = data;
+                    }
+                } catch (error) {
+                    console.error("[LiveAIS] Error parsing message:", error);
                 }
+            };
 
-                // Geographic Pre-filtering: Only buffer if within current view
-                const bounds = map.getBounds();
-                if (bounds.contains([data.lat, data.lon])) {
-                    bufferRef.current[data.mmsi] = data;
+            socket.onclose = (event) => {
+                console.log(`[LiveAIS] WebSocket Disconnected. Code: ${event.code}`);
+                // Simple exponential backoff: 1s, 2s, 4s, up to 10s
+                if (isMounted && reconnectCountRef.current < 10) {
+                    const delay = Math.min(10000, Math.pow(2, reconnectCountRef.current) * 1000);
+                    console.log(`[LiveAIS] Reconnecting in ${delay}ms... (attempt ${reconnectCountRef.current + 1})`);
+                    reconnectTimeoutRef.current = setTimeout(() => {
+                        reconnectCountRef.current++;
+                        connect();
+                    }, delay);
                 }
-            } catch (error) {
-                console.error("[LiveAIS] Error parsing message:", error);
-            }
+            };
+
+            socket.onerror = (err) => {
+                console.error("[LiveAIS] WebSocket Error:", err);
+            };
         };
 
-        socket.onclose = (event) => {
-            console.log(`[LiveAIS] WebSocket Disconnected. Code: ${event.code}, Reason: ${event.reason}`);
-        };
+        connect();
 
         // Sync buffer to parent every 1000ms
         const syncInterval = setInterval(() => {
             if (Object.keys(bufferRef.current).length > 0) {
                 onUpdate({ ...bufferRef.current });
-                // We clear the buffer to ensure we only push NEW updates
                 bufferRef.current = {};
             }
         }, 1000);
 
         return () => {
+            isMounted = false;
             clearInterval(syncInterval);
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.close();
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            if (socketRef.current) {
+                socketRef.current.close();
+                socketRef.current = null;
             }
         };
     }, [onUpdate, map]);

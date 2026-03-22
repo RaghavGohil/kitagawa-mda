@@ -56,15 +56,24 @@ async def _get_ais_coverage_dates(db: AsyncSession) -> dict[str, bool]:
     if _ais_coverage_cache and (now - _ais_coverage_cache_ts) < _AIS_COVERAGE_TTL:
         return _ais_coverage_cache
 
-    result = await db.execute(text("SELECT date, has_coverage FROM ais_coverage_dates"))
-    rows = result.fetchall()
-    cache = {}
-    for r in rows:
-        date_key = r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0])
-        cache[date_key] = bool(r[1])
-    _ais_coverage_cache = cache
-    _ais_coverage_cache_ts = now
-    return cache
+    try:
+        result = await db.execute(
+            text("SELECT date, has_coverage FROM ais_coverage_dates")
+        )
+        rows = result.fetchall()
+        cache = {}
+        for r in rows:
+            date_key = (
+                r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0])
+            )
+            cache[date_key] = bool(r[1])
+        _ais_coverage_cache = cache
+        _ais_coverage_cache_ts = now
+        return cache
+    except Exception as e:
+        # Fallback if table doesn't exist yet or is inaccessible
+        print(f"[Vessels] Failed to fetch AIS coverage: {e}")
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -116,167 +125,193 @@ async def get_vessels(
     min_lat: Optional[float] = Query(None),
     max_lon: Optional[float] = Query(None),
     max_lat: Optional[float] = Query(None),
-    zoom: int = Query(10, ge=1, le=22),
+    zoom: float = Query(10, ge=1, le=22),
     anomaly_only: bool = Query(False),
     satellite_type: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=20000),
     db: AsyncSession = Depends(get_db),
 ):
+    zoom = int(zoom)
     """
     Get vessels (correlated detections).
     Optionally filter by bounding box, anomaly status, or sensor type.
     """
-    # Preload AIS coverage dates (cached)
-    coverage = await _get_ais_coverage_dates(db)
+    try:
+        # Preload AIS coverage dates (cached)
+        coverage = await _get_ais_coverage_dates(db)
 
-    where_clauses = []
-    params = {"limit": limit}
+        where_clauses = []
+        params = {"limit": limit}
 
-    if (
-        min_lon is not None
-        and min_lat is not None
-        and max_lon is not None
-        and max_lat is not None
-    ):
-        where_clauses.append(
-            "ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))"
+        if (
+            min_lon is not None
+            and min_lat is not None
+            and max_lon is not None
+            and max_lat is not None
+        ):
+            where_clauses.append(
+                "ST_Intersects(geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326))"
+            )
+            params.update(
+                {
+                    "min_lon": min_lon,
+                    "min_lat": min_lat,
+                    "max_lon": max_lon,
+                    "max_lat": max_lat,
+                }
+            )
+
+        if anomaly_only:
+            where_clauses.append(
+                "(correlation_distance_m > 500 OR correlation_distance_m IS NULL)"
+            )
+
+        if satellite_type:
+            where_clauses.append("sensor_type = :sensor")
+            params["sensor"] = satellite_type
+
+        where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
+
+        # Landmask filter: exclude detections flagged as being on land
+        landmask_filter = "(fp_flags IS NULL OR fp_flags NOT LIKE '%land%')"
+
+        # Dynamic grid size for grouping based on zoom
+        # z >= 15: ~1m (effectively no grouping)
+        # z >= 8: ~10m
+        # z < 8: ~50m
+        # Grid-based sampling for "Representative Ships" at low zoom
+        # This prevents UI lag by picking 1 real high-confidence vessel per grid cell
+        representative_sql = ""
+        vessel_order_sql = "ORDER BY last_seen DESC"
+
+        # Increase grid size for more aggressive sparsification at low zoom
+        if zoom < 12:
+            grid_size = 180.0 / (2**zoom)  # Larger cells for sparse display
+            representative_sql = f"DISTINCT ON (ST_SnapToGrid(geom, {grid_size}))"
+            vessel_order_sql = f"ORDER BY ST_SnapToGrid(geom, {grid_size}), confidence DESC, last_seen DESC"
+
+        # Refined query — picks 1 real representative vessel per grid cell at low zoom
+        sql = text(f"""
+            SELECT {representative_sql}
+                COALESCE(mmsi, -id) AS v_id,
+                1 AS detection_count, -- Each representative counts as 1 for UI consistency
+                confidence AS avg_confidence,
+                detection_datetime AS last_seen,
+                ST_Y(geom) AS lat,
+                ST_X(geom) AS lon,
+                ARRAY[sensor_type] AS sensor_types,
+                correlation_distance_m AS avg_dist,
+                custom_name AS display_name,
+                COALESCE(mmsi, 0) as real_mmsi,
+                classification as global_classification
+            FROM detections
+            WHERE {where_str} AND {landmask_filter}
+            {vessel_order_sql}
+            LIMIT :limit
+        """)
+        params["grid_size"] = grid_size
+
+        result = await db.execute(sql, params)
+        rows = result.fetchall()
+
+        # Batch-fetch SOG/COG for identified vessels
+        identified_mmsis = [int(r[9]) for r in rows if r[9] and int(r[9]) > 0]
+        ais_info = {}
+        if identified_mmsis:
+            ais_result = await db.execute(
+                text("""
+                    SELECT DISTINCT ON (mmsi) mmsi, sog, cog
+                    FROM ais_tracks
+                    WHERE mmsi = ANY(:mmsis)
+                    ORDER BY mmsi, timestamp DESC
+                """),
+                {"mmsis": identified_mmsis},
+            )
+            for ar in ais_result.fetchall():
+                ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
+
+        # --- AUTO-CORRELATION ON SEEK (EPHEMERAL, SEQUENTIAL) ---
+        # Optimized: Cap at 5 sequential checks, and only at high zoom (>14)
+        indices_to_match = []
+        if zoom >= 14:
+            indices_to_match = [
+                i for i, r in enumerate(rows) if not r[9]
+            ]  # real_mmsi is r[9]
+
+        match_results = {}
+        if indices_to_match:
+            from backend.services.correlation import find_best_ais_match
+
+            for idx in indices_to_match[:5]:  # Cap at 5 for speed (~25ms total)
+                r = rows[idx]
+                match = await find_best_ais_match(db, r[4], r[5], r[3])
+                if match:
+                    match_results[idx] = match
+
+        vessels = []
+        for i, r in enumerate(rows):
+            res_match = match_results.get(i)
+            if res_match:
+                real_mmsi = res_match["mmsi"]
+                avg_dist = res_match["dist"]
+                display_name = res_match["name"]
+                db_cls = "identified"
+            else:
+                real_mmsi = int(r[9]) if r[9] else 0
+                avg_dist = float(r[7]) if r[7] is not None else None
+                display_name = r[8]
+                db_cls = r[10]
+
+            last_seen_str = r[3].isoformat() if r[3] else None
+
+            anomaly_type = _classify_vessel(
+                real_mmsi, avg_dist, last_seen_str, coverage, db_classification=db_cls
+            )
+            color = _CLASSIFICATION_COLORS.get(anomaly_type, "#6b7280")
+            ais = ais_info.get(real_mmsi, {})
+
+            vessels.append(
+                {
+                    "mmsi": int(real_mmsi),
+                    "v_id": int(r[0]),
+                    "name": str(display_name)
+                    if display_name
+                    else (
+                        f"Vessel {real_mmsi}"
+                        if real_mmsi > 0
+                        else f"Unidentified {abs(int(r[0]))}"
+                    ),
+                    "detection_count": int(r[1]),
+                    "avg_confidence": _safe_round(r[2], 4),
+                    "last_seen": last_seen_str,
+                    "lat": _safe_round(r[4], 6),
+                    "lon": _safe_round(r[5], 6),
+                    "sensor_types": [str(s) for s in list(set(r[6]))] if r[6] else [],
+                    "anomaly_type": str(anomaly_type),
+                    "color": str(color),
+                    "is_identified": bool(
+                        real_mmsi > 0 and anomaly_type == "identified"
+                    ),
+                    "sog": _safe_round(ais.get("sog"), 2),
+                    "cog": _safe_round(ais.get("cog"), 2),
+                }
+            )
+
+        return {
+            "vessels": vessels,
+            "total": len(vessels),
+        }
+    except Exception as e:
+        import traceback
+
+        error_details = traceback.format_exc()
+        print(f"[Vessels API] 500 Error: {error_details}")
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "error": str(e)},
         )
-        params.update(
-            {
-                "min_lon": min_lon,
-                "min_lat": min_lat,
-                "max_lon": max_lon,
-                "max_lat": max_lat,
-            }
-        )
-
-    if anomaly_only:
-        where_clauses.append(
-            "(correlation_distance_m > 500 OR correlation_distance_m IS NULL)"
-        )
-
-    if satellite_type:
-        where_clauses.append("sensor_type = :sensor")
-        params["sensor"] = satellite_type
-
-    where_str = " AND ".join(where_clauses) if where_clauses else "TRUE"
-
-    # Landmask filter: exclude detections flagged as being on land
-    landmask_filter = "(fp_flags IS NULL OR fp_flags NOT LIKE '%land%')"
-
-    # Dynamic grid size for grouping based on zoom
-    # z >= 15: ~1m (effectively no grouping)
-    # z >= 8: ~10m
-    # z < 8: ~50m
-    grid_size = 0.00001 if zoom >= 15 else 0.0001 if zoom >= 8 else 0.0005
-
-    # Simplified query — leverages stored classification
-    sql = text(f"""
-        SELECT
-            COALESCE(mmsi, -MIN(id)) AS v_id,
-            COUNT(*) AS detection_count,
-            AVG(confidence) AS avg_confidence,
-            MAX(detection_datetime) AS last_seen,
-            AVG(ST_Y(geom)) AS lat,
-            AVG(ST_X(geom)) AS lon,
-            ARRAY_AGG(sensor_type) AS sensor_types,
-            AVG(correlation_distance_m) AS avg_dist,
-            MAX(custom_name) AS display_name,
-            MAX(COALESCE(mmsi, 0)) as real_mmsi,
-            MAX(classification) as global_classification
-        FROM detections
-        WHERE {where_str} AND {landmask_filter}
-        GROUP BY
-            mmsi,
-            CASE WHEN mmsi IS NULL THEN ST_SnapToGrid(geom, :grid_size) ELSE NULL END
-        ORDER BY last_seen DESC
-        LIMIT :limit
-    """)
-    params["grid_size"] = grid_size
-
-    result = await db.execute(sql, params)
-    rows = result.fetchall()
-
-    # Batch-fetch SOG/COG for identified vessels
-    identified_mmsis = [int(r[9]) for r in rows if r[9] and int(r[9]) > 0]
-    ais_info = {}
-    if identified_mmsis:
-        ais_result = await db.execute(
-            text("""
-                SELECT DISTINCT ON (mmsi) mmsi, sog, cog
-                FROM ais_tracks
-                WHERE mmsi = ANY(:mmsis)
-                ORDER BY mmsi, timestamp DESC
-            """),
-            {"mmsis": identified_mmsis},
-        )
-        for ar in ais_result.fetchall():
-            ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
-
-    # --- AUTO-CORRELATION ON SEEK (EPHEMERAL, SEQUENTIAL) ---
-    # Must be sequential: async sessions can't be shared across asyncio.gather
-    indices_to_match = [i for i, r in enumerate(rows) if not r[9]]  # real_mmsi is r[9]
-    match_results = {}
-    if indices_to_match:
-        from backend.services.correlation import find_best_ais_match
-
-        for idx in indices_to_match[:20]:  # Cap at 20 for speed (~40ms total)
-            r = rows[idx]
-            match = await find_best_ais_match(db, r[4], r[5], r[3])
-            if match:
-                match_results[idx] = match
-
-    vessels = []
-    for i, r in enumerate(rows):
-        res_match = match_results.get(i)
-        if res_match:
-            real_mmsi = res_match["mmsi"]
-            avg_dist = res_match["dist"]
-            display_name = res_match["name"]
-            db_cls = "identified"
-        else:
-            real_mmsi = int(r[9]) if r[9] else 0
-            avg_dist = float(r[7]) if r[7] is not None else None
-            display_name = r[8]
-            db_cls = r[10]
-
-        last_seen_str = r[3].isoformat() if r[3] else None
-
-        anomaly_type = _classify_vessel(
-            real_mmsi, avg_dist, last_seen_str, coverage, db_classification=db_cls
-        )
-        color = _CLASSIFICATION_COLORS.get(anomaly_type, "#6b7280")
-        ais = ais_info.get(real_mmsi, {})
-
-        vessels.append(
-            {
-                "mmsi": real_mmsi,
-                "v_id": r[0],
-                "name": display_name
-                if display_name
-                else (
-                    f"Vessel {real_mmsi}"
-                    if real_mmsi > 0
-                    else f"Unidentified {abs(r[0])}"
-                ),
-                "detection_count": r[1],
-                "avg_confidence": _safe_round(r[2], 4),
-                "last_seen": last_seen_str,
-                "lat": _safe_round(r[4], 6),
-                "lon": _safe_round(r[5], 6),
-                "sensor_types": list(set(r[6])) if r[6] else [],
-                "anomaly_type": anomaly_type,
-                "color": color,
-                "is_identified": real_mmsi > 0 and anomaly_type == "identified",
-                "sog": _safe_round(ais.get("sog"), 2),
-                "cog": _safe_round(ais.get("cog"), 2),
-            }
-        )
-
-    return {
-        "vessels": vessels,
-        "total": len(vessels),
-    }
 
 
 @router.get("/chips/{detection_id}")

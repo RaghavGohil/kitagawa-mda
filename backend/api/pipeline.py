@@ -75,6 +75,7 @@ async def broadcast_status():
 
 
 @router.websocket("/ws/status")
+@router.websocket("/ws")  # Compatibility alias
 async def status_websocket(websocket: WebSocket):
     await manager.connect(websocket)
     try:

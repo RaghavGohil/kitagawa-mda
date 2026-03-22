@@ -12,13 +12,42 @@ interface AISTrack {
     centerIdx?: number;
 }
 
-const getVesselIcon = (color: string, isSelected: boolean, rotation: number = 0) => L.divIcon({
+const getVesselIcon = (
+    color: string,
+    isSelected: boolean,
+    rotation: number = 0,
+    name: string = "",
+    labelOpacity: number = 0
+) => L.divIcon({
     className: "custom-vessel-icon",
     html: `
-        <div style="position: relative; width: 30px; height: 30px; transform: rotate(${rotation}deg);">
-            <svg width="30" height="30" viewBox="-10 -10 120 120" style="cursor: pointer;">
-                <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${isSelected ? 0.95 : 0.8}" stroke="${color}" stroke-width="${isSelected ? 8 : 4}" />
-            </svg>
+        <div style="position: relative; width: 30px; height: 30px;">
+            <div style="width: 30px; height: 30px; transform: rotate(${rotation}deg);">
+                <svg width="30" height="30" viewBox="-10 -10 120 120" style="cursor: pointer;">
+                    <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${isSelected ? 0.95 : 0.8}" stroke="${color}" stroke-width="${isSelected ? 8 : 4}" />
+                </svg>
+            </div>
+            ${name ? `
+            <div style="
+                opacity: ${labelOpacity};
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 10px;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);
+                pointer-events: none;
+                white-space: nowrap;
+                margin-bottom: 8px;
+                transition: opacity 0.2s ease-in-out;
+                color: ${color};
+            ">
+                ${name}
+            </div>` : ""}
         </div>
     `,
     iconSize: [30, 30],
@@ -45,8 +74,14 @@ export const AISTrackLayer = ({
 }) => {
     const [tracks, setTracks] = useState<AISTrack[]>([]);
     const map = useMap();
+    const [zoom, setZoom] = useState(map.getZoom());
     const lastFetchParams = useRef<string>("");
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    // Track zoom level for label visibility
+    useMapEvent("zoomend", () => {
+        setZoom(map.getZoom());
+    });
 
     const fetchTracks = useCallback(async () => {
         if (!show) {
@@ -55,7 +90,7 @@ export const AISTrackLayer = ({
         }
 
         const bounds = map.getBounds();
-        const zoom = map.getZoom();
+        const currentZoom = map.getZoom();
 
         // Round time to 12h chunks to leverage caching and reduce API calls
         const chunkMs = 12 * 60 * 60 * 1000;
@@ -66,7 +101,7 @@ export const AISTrackLayer = ({
         const time_end = new Date(roundedTimeMs + 24 * 60 * 60 * 1000).toISOString();
         const mmsisStr = Array.from(new Set(correlatedVessels.map(v => v.mmsi))).join(",");
 
-        const paramsStr = `${bounds.toBBoxString()}-${zoom}-${time_start}-${time_end}`;
+        const paramsStr = `${bounds.toBBoxString()}-${currentZoom}-${time_start}-${time_end}`;
         if (paramsStr === lastFetchParams.current) return;
         lastFetchParams.current = paramsStr;
 
@@ -81,7 +116,7 @@ export const AISTrackLayer = ({
                 min_lat: bounds.getSouth().toFixed(6),
                 max_lon: bounds.getEast().toFixed(6),
                 max_lat: bounds.getNorth().toFixed(6),
-                zoom: zoom.toString(),
+                zoom: Math.round(currentZoom).toString(),
                 limit: "1000", // Sufficient for local viewport
                 time_start,
                 time_end,
@@ -118,6 +153,12 @@ export const AISTrackLayer = ({
     }, [show, playbackTime, fetchTracks]);
 
     if (!show) return null;
+
+    // Determine if we are in "Live" mode or "Historical Playback" mode
+    const isLivePlayback = Math.abs(playbackTime.getTime() - Date.now()) < 5 * 60 * 1000;
+
+    // Zoom opacity for labels
+    const labelOpacity = zoom <= 8 ? 0 : zoom === 9 ? 0.4 : zoom === 10 ? 0.7 : 1;
 
     const vesselMap = new Map(correlatedVessels.map(v => [v.mmsi, v]));
 
@@ -183,7 +224,15 @@ export const AISTrackLayer = ({
         const slicedPoints = t.points.slice(startIdx, endIdx);
         const newCenterIdx = closestIdx - startIdx;
 
-        return { mmsi: t.mmsi, points: slicedPoints, centerIdx: newCenterIdx, currentPos, cog, vessel: vessel?.vessel };
+        return {
+            mmsi: t.mmsi,
+            points: slicedPoints,
+            centerIdx: newCenterIdx,
+            currentPos,
+            cog,
+            vessel: vessel?.vessel,
+            name: vessel?.vessel?.name || (t.mmsi ? `${t.mmsi}` : "Dark Vessel")
+        };
     }).filter(Boolean);
 
     return (
@@ -216,30 +265,29 @@ export const AISTrackLayer = ({
                         />
                     ))}
 
-                    {/* Render the actual ship icon at its historical time-travel position */}
-                    <Marker
-                        position={[track.currentPos.lat, track.currentPos.lon]}
-                        icon={getVesselIcon("#34d399", String(track.mmsi) === selectedMmsi, track.cog)}
-                        eventHandlers={{
-                            click: () => {
-                                if (onVesselSelect) {
-                                    onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: "ship" });
+                    {/* 
+                        Only render the ship icon (triangle) if we are in historical playback.
+                        In live mode, VesselMarker handles the main icon to avoid double-rendering.
+                    */}
+                    {!isLivePlayback && (
+                        <Marker
+                            position={[track.currentPos.lat, track.currentPos.lon]}
+                            icon={getVesselIcon(
+                                "#34d399",
+                                String(track.mmsi) === selectedMmsi,
+                                track.cog,
+                                track.name,
+                                labelOpacity
+                            )}
+                            eventHandlers={{
+                                click: () => {
+                                    if (onVesselSelect) {
+                                        onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: "ship" });
+                                    }
                                 }
-                            }
-                        }}
-                    >
-                        <Tooltip
-                            permanent
-                            direction="top"
-                            offset={[0, -15]}
-                            className="vessel-name-tooltip"
-                            interactive
-                        >
-                            <span className="font-mono text-[10px] font-bold text-[#34d399] drop-shadow-md">
-                                {track.vessel?.name || (track.mmsi ? `MMSI: ${track.mmsi}` : "Dark Vessel")}
-                            </span>
-                        </Tooltip>
-                    </Marker>
+                            }}
+                        />
+                    )}
                 </Fragment>
             ))}
         </>

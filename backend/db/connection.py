@@ -4,6 +4,7 @@ Async SQLAlchemy + GeoAlchemy2 database connection.
 
 from __future__ import annotations
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -13,8 +14,8 @@ from shared.config import DATABASE_URL
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=20,
-    max_overflow=10,
+    pool_size=50,
+    max_overflow=20,
     pool_pre_ping=True,
 )
 
@@ -62,7 +63,19 @@ async def init_db():
             __import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS postgis")
         )
 
-    # Step 2: Ensure all base tables exist (SQLAlchemy create_all is safe on existing tables)
+        # Step 2.1: Ensure optimized indices for frequently queried patterns
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_ais_tracks_mmsi_timestamp ON ais_tracks (mmsi, timestamp DESC)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_ais_tracks_geom_gist ON ais_tracks USING GIST (geom)"
+            )
+        )
+
+        # Step 2: Ensure all base tables exist (SQLAlchemy create_all is safe on existing tables)
     print("[DB] Ensuring base tables exist...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
