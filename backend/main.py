@@ -91,7 +91,8 @@ app.add_middleware(
     allow_headers=["*", "bypass-tunnel-reminder"],
 )
 
-# Register routers
+from backend.api.correlate import router as correlate_router
+
 app.include_router(detections_router)
 app.include_router(ais_router)
 app.include_router(vessels_router)
@@ -101,6 +102,7 @@ app.include_router(stats_router)
 app.include_router(boundaries_router)
 app.include_router(ais_live_router)
 app.include_router(config_router)
+app.include_router(correlate_router)
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import { anomalyTypeData, getAnomalyDescription } from "@/data/data";
 interface VesselInfoPanelProps {
     vessel: Vessel;
     isLoading?: boolean;
+    onIdentify?: (vesselId: string) => Promise<void>;
 }
 
 const InfoRow = ({ label, value, mono }: { label: string; value: string | undefined | null; mono?: boolean }) => (
@@ -20,8 +21,9 @@ const InfoRow = ({ label, value, mono }: { label: string; value: string | undefi
     </div>
 );
 
-export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => {
+export const VesselInfoPanel = ({ vessel, isLoading, onIdentify }: VesselInfoPanelProps) => {
     const isAnomaly = vessel.anomaly.type === "anomaly";
+    const isOutOfCoverage = vessel.anomaly.type === "out_of_coverage";
     const isLive = vessel.id.startsWith("live-");
 
     // Use backend-authoritative color, fallback to anomaly type data
@@ -97,8 +99,8 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
                 )}
             </div>
 
-            {/* Dark vessel warning */}
-            {isAnomaly && (
+            {/* Dark vessel warning or Identify prompt */}
+            {isAnomaly ? (
                 <div className="mx-5 mt-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                     <div className="flex gap-3">
                         <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -107,10 +109,38 @@ export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => 
                             <p className="text-sm text-muted-foreground mt-1">
                                 This vessel was detected in an area with AIS coverage but is not transmitting an AIS signal.
                             </p>
+                            {onIdentify && (
+                                <button
+                                    onClick={() => onIdentify(vessel.id)}
+                                    disabled={isLoading}
+                                    className="mt-3 text-xs font-semibold px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+                                >
+                                    {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                                    Re-Correlate
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
-            )}
+            ) : isOutOfCoverage && onIdentify ? (
+                <div className="mx-5 mt-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                    <div className="flex gap-3 items-center">
+                        <Radar className="h-5 w-5 text-blue-500 shrink-0" />
+                        <div className="flex-1">
+                            <p className="text-sm font-semibold text-blue-500">Unidentified Vessel</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Check for matching AIS data on-the-fly.</p>
+                        </div>
+                        <button
+                            onClick={() => onIdentify(vessel.id)}
+                            disabled={isLoading}
+                            className="text-xs font-semibold px-3 py-1.5 rounded bg-blue-500 text-white hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                            {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                            Identify
+                        </button>
+                    </div>
+                </div>
+            ) : null}
 
             <Separator className="my-4" />
 
