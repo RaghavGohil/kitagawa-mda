@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Layers, Route, ChevronDown } from "lucide-react";
+import { Layers, Route, ChevronDown, Globe } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { AnomalyType, ZoneType } from "@/types";
@@ -13,10 +13,12 @@ interface LayerControlProps {
     visibleZoneTypes: Set<ZoneType>;
     showTracks: boolean;
     showLiveAIS: boolean;
+    showCoverage: boolean;
     onAnomalyTypesToggle: (type: AnomalyType) => void;
     onZoneTypesToggle: (type: ZoneType) => void;
     onShowTracksChange: (show: boolean) => void;
     onShowLiveAISChange: (show: boolean) => void;
+    onShowCoverageChange: (show: boolean) => void;
 }
 
 export const LayerControl = ({
@@ -24,10 +26,12 @@ export const LayerControl = ({
     visibleZoneTypes,
     showTracks,
     showLiveAIS,
+    showCoverage,
     onAnomalyTypesToggle,
     onZoneTypesToggle,
     onShowTracksChange,
     onShowLiveAISChange,
+    onShowCoverageChange,
 }: LayerControlProps) => {
     const [isExpanded, setIsExpanded] = useState(false);
 
@@ -48,7 +52,7 @@ export const LayerControl = ({
                 <div className="border-t border-border">
                     {/* Vessel Types */}
                     <div className="p-4 space-y-3">
-                        <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Vessel Types</h4>
+                        <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Vessel Classification</h4>
                         {Object.entries(anomalyTypeData).map(([id, meta]) => (
                             <label key={id} className="flex items-center justify-between cursor-pointer group py-0.5">
                                 <div className="flex items-center gap-2.5">
@@ -91,6 +95,14 @@ export const LayerControl = ({
                                 <span className="text-sm font-medium group-hover:text-foreground transition-colors">Vessel Tracks</span>
                             </div>
                             <Switch checked={showTracks} onCheckedChange={onShowTracksChange} />
+                        </label>
+
+                        <label className="flex items-center justify-between cursor-pointer group py-0.5">
+                            <div className="flex items-center gap-2.5">
+                                <Globe className="h-4 w-4 text-cyan-500" />
+                                <span className="text-sm font-medium group-hover:text-foreground transition-colors">AIS Coverage</span>
+                            </div>
+                            <Switch checked={showCoverage} onCheckedChange={onShowCoverageChange} />
                         </label>
 
                         <label className="flex items-center justify-between cursor-pointer group py-0.5 pt-1">

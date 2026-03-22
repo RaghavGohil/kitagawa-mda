@@ -58,10 +58,19 @@ export default function DashboardPage() {
   }, [isMobile]);
 
   // ===================== DATA =====================
+  // Dynamic vessel limit: more ships visible at higher zoom
+  const vesselLimit = useMemo(() => {
+    if (!mapZoom) return 500;
+    if (mapZoom >= 12) return 2000;
+    if (mapZoom >= 8) return 1000;
+    if (mapZoom >= 5) return 500;
+    return 200;
+  }, [mapZoom]);
+
   const { data: vesselData, isLoading: isLoadingVessels } = useVessels({
     bounds: mapBounds,
     zoom: mapZoom,
-    limit: 500,
+    limit: vesselLimit,
   });
   const { data: selectedVesselDetail, isLoading: isLoadingDetail } = useVessel(selectedVesselId);
   const { data: alerts = [], isLoading: isLoadingAlerts } = useAlerts(50);
@@ -182,10 +191,12 @@ export default function DashboardPage() {
                   visibleZoneTypes={visibleZoneTypes}
                   showTracks={showTracks}
                   showLiveAIS={showLiveAIS}
+                  showCoverage={showCoverage}
                   onAnomalyTypesToggle={toggleAnomalyType}
                   onZoneTypesToggle={toggleZoneType}
                   onShowTracksChange={setShowTracks}
                   onShowLiveAISChange={setShowLiveAIS}
+                  onShowCoverageChange={setShowCoverage}
                 />
               </div>
             </div>

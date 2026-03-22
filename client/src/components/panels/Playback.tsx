@@ -148,8 +148,11 @@ export const Playback = ({ onTimeChange, onTimeRangeChange, jumpToTime, compact 
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(0); setIsPlaying(false); setIsLiveMode(false); }}>
                         <SkipBack className="h-4 w-4" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => { setIsPlaying(!isPlaying); setIsLiveMode(false); }}>
-                        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    <Button variant="outline" size="icon" className={cn(
+                        "h-9 w-9 transition-all",
+                        isLiveMode && "border-red-500/30 bg-red-500/10 text-red-500 hover:bg-red-500/20"
+                    )} onClick={() => { setIsPlaying(!isPlaying); if (isLiveMode) setIsLiveMode(false); }}>
+                        {isPlaying || isLiveMode ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                     </Button>
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setCurrentTime(100); setIsPlaying(false); setIsLiveMode(false); }}>
                         <SkipForward className="h-4 w-4" />
