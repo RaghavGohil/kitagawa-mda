@@ -413,14 +413,29 @@ async def get_vessel(
         for p in ais_rows
     ]
 
+    # Fetch rich metadata from ais_vessels
+    vessel_meta_res = await db.execute(
+        text("SELECT * FROM ais_vessels WHERE mmsi = :mmsi"),
+        {"mmsi": mmsi_val if not is_unidentified else 0},
+    )
+    v_row = vessel_meta_res.fetchone()
+    v_meta = dict(v_row._mapping) if v_row else {}
+
     return {
         "mmsi": mmsi_val if not is_unidentified else 0,
-        "v_id": mmsi,  # This is the unique grouping key
+        "v_id": mmsi,
         "name": det_rows[0][9]
         if (det_rows and det_rows[0][9])
         else (
             f"Vessel {mmsi_val}" if not is_unidentified else f"Unidentified {mmsi_val}"
         ),
+        "imo": v_meta.get("imo"),
+        "callSign": v_meta.get("callsign"),
+        "length": v_meta.get("length"),
+        "width": v_meta.get("width"),
+        "draught": v_meta.get("draught"),
+        "destination": v_meta.get("destination"),
+        "eta": v_meta.get("eta"),
         "detection_count": len(detections),
         "anomaly_type": anomaly_type,
         "detections": detections,

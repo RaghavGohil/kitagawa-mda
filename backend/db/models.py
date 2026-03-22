@@ -141,6 +141,13 @@ class AISVessel(Base):
     mmsi = Column(BigInteger, primary_key=True, index=True)
     vessel_name = Column(String(512), nullable=True)
     vessel_type = Column(String(255), nullable=True)
+    imo = Column(String(32), nullable=True)
+    callsign = Column(String(32), nullable=True)
+    length = Column(Float, nullable=True)
+    width = Column(Float, nullable=True)
+    draught = Column(Float, nullable=True)
+    destination = Column(String(512), nullable=True)
+    eta = Column(String(64), nullable=True)
     last_seen = Column(DateTime(timezone=True), nullable=True, index=True)
 
 

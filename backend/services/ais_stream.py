@@ -276,9 +276,9 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
     _state.total_messages += 1
     _state.last_message_time = datetime.now(timezone.utc)
 
-    # Note: We only care about PositionReport types for now (1, 2, 3)
+    # Note: We support PositionReport (1, 2, 3) and ShipStaticData (5)
     msg_type = msg.get("MessageType")
-    if msg_type not in ["PositionReport"]:
+    if msg_type not in ["PositionReport", "ShipStaticData"]:
         return
 
     mmsi = msg.get("MetaData", {}).get("MMSI")
@@ -333,10 +333,29 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
 
     # Update metadata if available
     vessel_data = msg.get("MetaData")
-    if vessel_data:
+    static_msg = msg.get("Message", {}).get("ShipStaticData", {})
+
+    if vessel_data or static_msg:
         vessel_batch[mmsi] = {
-            "vessel_name": vessel_data.get("ShipName", "").strip(),
-            "vessel_type": vessel_data.get("ShipType"),
+            "vessel_name": vessel_data.get("ShipName", "").strip()
+            if vessel_data
+            else static_msg.get("Name", "").strip(),
+            "vessel_type": vessel_data.get("ShipType")
+            if vessel_data
+            else static_msg.get("Type"),
+            "imo": str(static_msg.get("Imo") or ""),
+            "callsign": static_msg.get("CallSign", "").strip(),
+            "length": float(
+                static_msg.get("Dimension", {}).get("A", 0)
+                + static_msg.get("Dimension", {}).get("B", 0)
+            ),
+            "width": float(
+                static_msg.get("Dimension", {}).get("C", 0)
+                + static_msg.get("Dimension", {}).get("D", 0)
+            ),
+            "draught": float(static_msg.get("MaximumStaticDraught", 0)),
+            "destination": static_msg.get("Destination", "").strip(),
+            "eta": f"{static_msg.get('Eta', {}).get('Month', 0)}-{static_msg.get('Eta', {}).get('Day', 0)} {static_msg.get('Eta', {}).get('Hour', 0)}:{static_msg.get('Eta', {}).get('Minute', 0)} UTC",
         }
 
 
@@ -349,15 +368,28 @@ async def _flush_to_db(track_batch, vessel_batch):
         try:
             # 1. Update/Upsert Vessels
             for mmsi, data in vessel_batch.items():
-                if not data["vessel_name"]:
+                if not data["vessel_name"] and not data["imo"]:
                     continue
 
                 upsert_sql = """
-                    INSERT INTO ais_vessels (mmsi, vessel_name, vessel_type, last_seen)
-                    VALUES (:mmsi, :vessel_name, :vessel_type, NOW())
+                    INSERT INTO ais_vessels (
+                        mmsi, vessel_name, vessel_type, imo, callsign, 
+                        length, width, draught, destination, eta, last_seen
+                    )
+                    VALUES (
+                        :mmsi, :vessel_name, :vessel_type, :imo, :callsign, 
+                        :length, :width, :draught, :destination, :eta, NOW()
+                    )
                     ON CONFLICT (mmsi) DO UPDATE SET
-                        vessel_name = EXCLUDED.vessel_name,
-                        vessel_type = EXCLUDED.vessel_type,
+                        vessel_name = COALESCE(NULLIF(EXCLUDED.vessel_name, ''), ais_vessels.vessel_name),
+                        vessel_type = COALESCE(EXCLUDED.vessel_type, ais_vessels.vessel_type),
+                        imo = COALESCE(NULLIF(EXCLUDED.imo, '0'), NULLIF(EXCLUDED.imo, ''), ais_vessels.imo),
+                        callsign = COALESCE(NULLIF(EXCLUDED.callsign, ''), ais_vessels.callsign),
+                        length = COALESCE(NULLIF(EXCLUDED.length, 0), ais_vessels.length),
+                        width = COALESCE(NULLIF(EXCLUDED.width, 0), ais_vessels.width),
+                        draught = COALESCE(NULLIF(EXCLUDED.draught, 0), ais_vessels.draught),
+                        destination = COALESCE(NULLIF(EXCLUDED.destination, ''), ais_vessels.destination),
+                        eta = COALESCE(NULLIF(EXCLUDED.eta, '0-0 0:0 UTC'), ais_vessels.eta),
                         last_seen = NOW()
                 """
                 await db.execute(
@@ -366,6 +398,13 @@ async def _flush_to_db(track_batch, vessel_batch):
                         "mmsi": mmsi,
                         "vessel_name": data["vessel_name"],
                         "vessel_type": data["vessel_type"],
+                        "imo": data["imo"],
+                        "callsign": data["callsign"],
+                        "length": data["length"],
+                        "width": data["width"],
+                        "draught": data["draught"],
+                        "destination": data["destination"],
+                        "eta": data["eta"],
                     },
                 )
 

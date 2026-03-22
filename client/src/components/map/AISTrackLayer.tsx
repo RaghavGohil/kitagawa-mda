@@ -5,12 +5,6 @@ import { Polyline, CircleMarker, Marker, useMap, useMapEvent } from "react-leafl
 import L from "leaflet";
 import { API_BASE_URL } from "@/lib/api";
 
-const vesselIcon = L.divIcon({
-    className: "custom-vessel-icon",
-    html: `<div style="width: 14px; height: 14px; background-color: #34d399; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);"></div>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
-});
 
 interface AISTrack {
     mmsi: number;

@@ -24,7 +24,7 @@ export interface Vessel {
     width?: number;
     draught?: number;
     destination?: string;
-    eta?: Date | null;
+    eta?: string | null;
     position: VesselPosition;
     track: VesselPosition[];
     anomaly: {
