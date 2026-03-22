@@ -14,10 +14,9 @@ export const vesselTypeData: Record<VesselType, { label: string; color: string }
 };
 
 export const anomalyTypeData: Record<AnomalyType, { label: string; color: string }> = {
-    identified: { label: "Vessel Matched", color: "#60a5fa" },
-    no_anomaly: { label: "Status Normal", color: "#4ade80" },
-    anomaly: { label: "Target Anomaly", color: "#fb923c" },
-    unidentified: { label: "Unidentified", color: "#94a3b8" },
+    identified: { label: "Identified", color: "#10b981" },
+    anomaly: { label: "Dark Vessel", color: "#ef4444" },
+    out_of_coverage: { label: "Out of Coverage", color: "#6b7280" },
 };
 
 export const zoneTypeData: Record<ZoneType, { label: string; color: string }> = {
@@ -30,10 +29,9 @@ export const zoneTypeData: Record<ZoneType, { label: string; color: string }> = 
 // ===== Helpers =====
 export const getAnomalyDescription = (type: AnomalyType): string => {
     switch (type) {
-        case "anomaly": return "Detected vessel not transmitting AIS in covered area";
-        case "unidentified": return "Detected outside AIS coverage area — status unknown";
-        case "identified": return "Matched to AIS vessel";
-        case "no_anomaly": return "Matched to AIS, position verified";
+        case "identified": return "Matched to AIS vessel within tolerance";
+        case "anomaly": return "Detected in coverage area — no AIS transmission (dark vessel)";
+        case "out_of_coverage": return "Detected outside AIS coverage area — status unknown";
         default: return "";
     }
 };

@@ -159,7 +159,7 @@ export async function fetchVessel(vesselId: string): Promise<Vessel> {
             course: t.cog,
         })),
         anomaly: {
-            type: data.anomaly_type || "unidentified",
+            type: data.anomaly_type || "out_of_coverage",
             confidence: latestDetection.confidence || 0,
             description: "",
         },
