@@ -4,7 +4,6 @@ Async SQLAlchemy + GeoAlchemy2 database connection.
 
 from __future__ import annotations
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -14,8 +13,9 @@ from shared.config import DATABASE_URL
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=50,
+    pool_size=30,
     max_overflow=20,
+    pool_timeout=30,
     pool_pre_ping=True,
 )
 
@@ -45,58 +45,20 @@ async def init_db():
     2. Creates all base tables via SQLAlchemy (safe IF NOT EXISTS).
     3. Runs Alembic migrations for any incremental schema changes.
     """
-    # Import all models here so they are registered with Base.metadata
-    # for the create_all call below.
-    from backend.db.models import (
-        Detection,
-        AISTrack,
-        ImageChip,
-        AISVessel,
-        ProcessedImage,
-        AISCoverageDate,
-        MaritimeBoundary,
-    )
-
-    # Step 1: Ensure PostGIS extension exists
-    async with engine.begin() as conn:
-        await conn.execute(
-            __import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS postgis")
-        )
-
-        # Step 2.1: Ensure optimized indices for frequently queried patterns
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_ais_tracks_mmsi_timestamp ON ais_tracks (mmsi, timestamp DESC)"
-            )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_ais_tracks_geom_gist ON ais_tracks USING GIST (geom)"
-            )
-        )
-
-        # Step 2: Ensure all base tables exist (SQLAlchemy create_all is safe on existing tables)
+    # Step 2: Ensure all base tables exist (SQLAlchemy create_all is safe on existing tables)
     print("[DB] Ensuring base tables exist...")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Add metadata columns to ais_vessels if missing (safe idempotent check)
-        for col, col_type in [
-            ("last_seen", "TIMESTAMP WITH TIME ZONE"),
-            ("imo", "VARCHAR(32)"),
-            ("callsign", "VARCHAR(32)"),
-            ("length", "FLOAT"),
-            ("width", "FLOAT"),
-            ("draught", "FLOAT"),
-            ("destination", "VARCHAR(512)"),
-            ("eta", "VARCHAR(64)"),
-        ]:
-            await conn.execute(
-                __import__("sqlalchemy").text(
-                    f"ALTER TABLE ais_vessels ADD COLUMN IF NOT EXISTS {col} {col_type}"
-                )
-            )
+        from backend.db.models import (  # noqa: F401
+            Detection,
+            AISTrack,
+            ImageChip,
+            AISVessel,
+            ProcessedImage,
+            AISCoverageDate,
+            MaritimeBoundary,
+        )
 
-    # Step 3: Run Alembic migrations for incremental changes
+        await conn.run_sync(Base.metadata.create_all)
     import os
 
     alembic_ini = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")

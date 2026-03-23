@@ -92,6 +92,7 @@ services:
       - POSTGRES_DB=kitagawa
       - POSTGRES_USER=kitagawa
       - POSTGRES_PASSWORD=kitagawa
+    shm_size: 2gb
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U kitagawa -d kitagawa" ]
       interval: 10s

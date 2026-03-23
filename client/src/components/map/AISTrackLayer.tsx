@@ -17,37 +17,17 @@ const getVesselIcon = (
     isSelected: boolean,
     rotation: number = 0,
     name: string = "",
-    labelOpacity: number = 0
+    labelOpacity: number = 0,
+    globalOpacity: number = 1
 ) => L.divIcon({
     className: "custom-vessel-icon",
     html: `
-        <div style="position: relative; width: 30px; height: 30px;">
+        <div style="position: relative; width: 30px; height: 30px; opacity: ${globalOpacity}; transition: opacity 0.3s ease;">
             <div style="width: 30px; height: 30px; transform: rotate(${rotation}deg);">
                 <svg width="30" height="30" viewBox="-10 -10 120 120" style="cursor: pointer;">
                     <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${isSelected ? 0.95 : 0.8}" stroke="${color}" stroke-width="${isSelected ? 8 : 4}" />
                 </svg>
             </div>
-            ${name ? `
-            <div style="
-                opacity: ${labelOpacity};
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 10px;
-                font-weight: 900;
-                text-transform: uppercase;
-                letter-spacing: 0.1em;
-                text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);
-                pointer-events: none;
-                white-space: nowrap;
-                margin-bottom: 8px;
-                transition: opacity 0.2s ease-in-out;
-                color: ${color};
-            ">
-                ${name}
-            </div>` : ""}
         </div>
     `,
     iconSize: [30, 30],
@@ -92,18 +72,34 @@ export const AISTrackLayer = ({
         const bounds = map.getBounds();
         const currentZoom = map.getZoom();
 
-        // Round time to 12h chunks to leverage caching and reduce API calls
-        const chunkMs = 12 * 60 * 60 * 1000;
+        // Round time to 6h chunks to leverage caching while staying responsive
+        const chunkMs = 6 * 60 * 60 * 1000;
         const roundedTimeMs = Math.round(playbackTime.getTime() / chunkMs) * chunkMs;
 
-        // Fetch wide window (24h) around playback time
-        const time_start = new Date(roundedTimeMs - 24 * 60 * 60 * 1000).toISOString();
+        // Expanded window: 72h back, 24h forward for rich historical context
+        const time_start = new Date(roundedTimeMs - 72 * 60 * 60 * 1000).toISOString();
         const time_end = new Date(roundedTimeMs + 24 * 60 * 60 * 1000).toISOString();
-        const mmsisStr = Array.from(new Set(correlatedVessels.map(v => v.mmsi))).join(",");
+        // Bucket center_time to 1h chunks to reduce DB connection churn during scrubbing
+        const bucketMs = 1 * 60 * 60 * 1000;
+        const bucketedTimeMs = Math.round(playbackTime.getTime() / bucketMs) * bucketMs;
+        const focalCenterTime = new Date(bucketedTimeMs).toISOString();
 
-        const paramsStr = `${bounds.toBBoxString()}-${currentZoom}-${time_start}-${time_end}`;
+        const mmsisStr = Array.from(new Set(
+            (correlatedVessels || [])
+                .filter(v => bounds.pad(0.5).contains([v.lat, v.lon]))
+                .map(v => v.mmsi)
+        )).join(",");
+
+        const paramsStr = `${bounds.toBBoxString()}-${currentZoom}-${time_start}-${time_end}-${focalCenterTime}-${mmsisStr}`;
         if (paramsStr === lastFetchParams.current) return;
         lastFetchParams.current = paramsStr;
+
+        // Discovery threshold: Only allow fetch without vessels if zoomed in past or at level 6
+        // Adjusted per user feedback: "if zoom level is 6 show everything"
+        if (mmsisStr.length === 0 && currentZoom < 6) {
+            setTracks([]);
+            return;
+        }
 
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -111,21 +107,27 @@ export const AISTrackLayer = ({
         abortControllerRef.current = new AbortController();
 
         try {
+            const mmsisToFetch = mmsisStr.length > 0 ? mmsisStr : "DISCOVERY";
+            console.log(`[AISTrackLayer] Fetching: zoom=${currentZoom}, mode=${mmsisToFetch}, center=${focalCenterTime}`);
+
             const params = new URLSearchParams({
                 min_lon: bounds.getWest().toFixed(6),
                 min_lat: bounds.getSouth().toFixed(6),
                 max_lon: bounds.getEast().toFixed(6),
                 max_lat: bounds.getNorth().toFixed(6),
                 zoom: Math.round(currentZoom).toString(),
-                limit: "1000", // Sufficient for local viewport
+                limit: "1000",
                 time_start,
                 time_end,
+                center_time: focalCenterTime,
+                mmsis: mmsisStr,
             });
 
             const url = `${API_BASE_URL}/api/v1/ais/tracks?${params}`;
             const response = await fetch(url, { signal: abortControllerRef.current.signal });
             if (response.ok) {
                 const data = await response.json();
+                console.log(`[AISTrackLayer] Received: ${data.tracks?.length || 0} tracks`);
                 const processedTracks = (data.tracks || []).map((t: any) => ({
                     ...t,
                     points: t.points.map((p: any) => ({
@@ -157,8 +159,8 @@ export const AISTrackLayer = ({
     // Determine if we are in "Live" mode or "Historical Playback" mode
     const isLivePlayback = Math.abs(playbackTime.getTime() - Date.now()) < 5 * 60 * 1000;
 
-    // Zoom opacity for labels
-    const labelOpacity = zoom <= 8 ? 0 : zoom === 9 ? 0.4 : zoom === 10 ? 0.7 : 1;
+    // Zoom opacity for labels (aligned with new Zoom 6 threshold)
+    const labelOpacity = zoom <= 4 ? 0 : zoom === 5 ? 0.5 : 1;
 
     const vesselMap = new Map(correlatedVessels.map(v => [v.mmsi, v]));
 
@@ -218,16 +220,10 @@ export const AISTrackLayer = ({
         const currentPoint = t.points[closestIdx] as any;
         const cog = currentPoint.cog || 0;
 
-        // Windowing: 10 points before and 10 points after the reference time
-        const startIdx = Math.max(0, closestIdx - 10);
-        const endIdx = Math.min(t.points.length, closestIdx + 11);
-        const slicedPoints = t.points.slice(startIdx, endIdx);
-        const newCenterIdx = closestIdx - startIdx;
-
         return {
             mmsi: t.mmsi,
-            points: slicedPoints,
-            centerIdx: newCenterIdx,
+            points: t.points, // Use the natural, full track points
+            centerIdx: closestIdx,
             currentPos,
             cog,
             vessel: vessel?.vessel,
@@ -237,59 +233,105 @@ export const AISTrackLayer = ({
 
     return (
         <>
-            {trackVisuals.map((track: any) => (
-                <Fragment key={`track-group-${track.mmsi}`}>
-                    <Polyline
-                        positions={track.points.map((p: any) => [p.lat, p.lon])}
-                        pathOptions={{
-                            color: "#34d399",
-                            weight: 1.5,
-                            opacity: 0.4,
-                            interactive: false,
-                        }}
-                    />
+            {trackVisuals.map((track: any) => {
+                const firstTime = new Date(track.points[0].timestamp).getTime();
+                const lastTime = new Date(track.points[track.points.length - 1].timestamp).getTime();
+                const nowTime = playbackTime.getTime();
 
-                    {/* Render dots at every single data point for maximum detail */}
-                    {track.points.map((p: any, idx: number) => (
-                        <CircleMarker
-                            key={`ais-dot-${track.mmsi}-${idx}`}
-                            center={[p.lat, p.lon]}
-                            radius={1.0}
+                // Overall temporal fading (for the ship icon)
+                const FADE_WINDOW_MS = 15 * 60 * 1000;
+                const fadeIn = Math.min(1, Math.max(0, (nowTime - firstTime) / FADE_WINDOW_MS));
+                const fadeOut = nowTime <= lastTime
+                    ? 1
+                    : Math.min(1, Math.max(0, (FADE_WINDOW_MS - (nowTime - lastTime)) / FADE_WINDOW_MS));
+                const temporalOpacity = Math.min(fadeIn, fadeOut);
+                const trailColor = "#10b981"; // Unified Emerald Green
+
+                return (
+                    <Fragment key={`track-group-${track.mmsi}`}>
+                        {/* 
+                            Trajectory Focal Points:
+                            We only show the immediate 5 points ahead and behind the vessel.
+                            This provides a clean, scientific trend without historical clutter.
+                        */}
+                        {track.points.map((p: any, idx: number) => {
+                            const idxDiff = Math.abs(idx - track.centerIdx);
+                            if (idxDiff > 5) return null;
+
+                            // Scale opacity and radius by proximity to center
+                            const pointOpacity = idxDiff === 0 ? 1.0 : (1 - (idxDiff / 6)) * 0.8;
+                            const radius = idxDiff === 0 ? 2.2 : idxDiff <= 2 ? 1.6 : 1.0;
+
+                            return (
+                                <CircleMarker
+                                    key={`ais-dot-${track.mmsi}-${idx}`}
+                                    center={[p.lat, p.lon]}
+                                    radius={radius}
+                                    pathOptions={{
+                                        color: trailColor,
+                                        fillColor: trailColor,
+                                        fillOpacity: pointOpacity * (isLivePlayback ? 1.0 : temporalOpacity),
+                                        stroke: false,
+                                        interactive: false,
+                                    }}
+                                />
+                            );
+                        })}
+
+                        {/* Ship Icon (Triangle) with precise heading */}
+                        {(!isLivePlayback || !track.vessel) && (
+                            <Marker
+                                position={[track.currentPos.lat, track.currentPos.lon]}
+                                icon={getVesselIcon(
+                                    trailColor,
+                                    String(track.mmsi) === selectedMmsi,
+                                    track.cog,
+                                    track.name,
+                                    labelOpacity,
+                                    isLivePlayback ? 1.0 : temporalOpacity
+                                )}
+                                eventHandlers={{
+                                    click: () => {
+                                        if (onVesselSelect) {
+                                            const syntheticFallback = {
+                                                id: String(track.mmsi),
+                                                mmsi: String(track.mmsi),
+                                                type: track.type || "ship",
+                                                name: track.name,
+                                                position: {
+                                                    lat: track.currentPos?.lat ?? track.points[0]?.lat ?? 0,
+                                                    lng: track.currentPos?.lon ?? track.points[0]?.lon ?? 0,
+                                                    heading: track.cog ?? 0,
+                                                    speed: track.points[0]?.sog ?? 0,
+                                                    timestamp: track.points[0]?.timestamp ? new Date(track.points[0].timestamp) : new Date(),
+                                                },
+                                                anomaly: {}
+                                            };
+                                            onVesselSelect(track.vessel || syntheticFallback);
+                                        }
+                                    }
+                                }}
+                            />
+                        )}
+                        {/* 
+                            The 'Worm' Trajectory:
+                            Draw a connecting line only for the immediate 5-point window.
+                        */}
+                        <Polyline
+                            positions={track.points
+                                .slice(Math.max(0, track.centerIdx - 5), Math.min(track.points.length, track.centerIdx + 6))
+                                .map((p: any) => [p.lat, p.lon])
+                            }
                             pathOptions={{
-                                color: "#34d399",
-                                fillColor: "#34d399",
-                                fillOpacity: 0.4,
-                                stroke: false,
+                                color: trailColor,
+                                weight: 2.0,
+                                opacity: 0.4 * (isLivePlayback ? 1.0 : temporalOpacity),
                                 interactive: false,
                             }}
                         />
-                    ))}
-
-                    {/* 
-                        Only render the ship icon (triangle) if we are in historical playback.
-                        In live mode, VesselMarker handles the main icon to avoid double-rendering.
-                    */}
-                    {!isLivePlayback && (
-                        <Marker
-                            position={[track.currentPos.lat, track.currentPos.lon]}
-                            icon={getVesselIcon(
-                                "#34d399",
-                                String(track.mmsi) === selectedMmsi,
-                                track.cog,
-                                track.name,
-                                labelOpacity
-                            )}
-                            eventHandlers={{
-                                click: () => {
-                                    if (onVesselSelect) {
-                                        onVesselSelect(track.vessel || { id: String(track.mmsi), mmsi: String(track.mmsi), type: "ship" });
-                                    }
-                                }
-                            }}
-                        />
-                    )}
-                </Fragment>
-            ))}
+                    </Fragment>
+                );
+            })}
         </>
     );
 };

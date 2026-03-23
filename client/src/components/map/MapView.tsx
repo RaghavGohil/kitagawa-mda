@@ -35,8 +35,8 @@ interface MapViewProps {
 const mapLiveToVessel = (live: LiveVessel): Vessel => ({
     id: `live-${live.mmsi}`,
     mmsi: String(live.mmsi),
-    name: `MMSI: ${live.mmsi}`, // Default until metadata arrives
-    type: "ship",
+    name: live.name || `MMSI: ${live.mmsi}`,
+    type: (live.type as any) || "ship",
     position: {
         lat: live.lat,
         lng: live.lon,
@@ -179,29 +179,29 @@ export const MapView = ({
         }
     }, [showLiveAIS]);
 
+    const prevEntitiesRef = useRef<Map<string, Vessel>>(new Map());
+
     // Merge detected vessels with live AIS vessels
-    // If a detected vessel has an MMSI that exists in live AIS, we prioritize the live position
-    // during "now" playback, but allow the detected position for historical reference.
     const allEntities = useMemo(() => {
         const result: Vessel[] = [...vessels];
         const mmsiToVessel = new Map<string, Vessel>();
 
-        // Index detections by MMSI for easy lookup
+        // Index detections by MMSI
         vessels.forEach(v => {
             if (v.mmsi) mmsiToVessel.set(v.mmsi, v);
         });
 
-        // Add live vessels that aren't already represented as detections
-        // OR update detections with real-time positions if playbackTime is current
         const isCurrentTime = Math.abs(playbackTime.getTime() - Date.now()) < 5 * 60 * 1000;
+        const isLowZoom = zoom < 6;
+        const gridSize = 180.0 / Math.pow(2, zoom);
+
+        const liveRepresentatives: Record<string, LiveVessel> = {};
 
         Object.values(liveVessels).forEach(live => {
             const mmsiStr = String(live.mmsi);
             const existing = mmsiToVessel.get(mmsiStr);
 
             if (existing) {
-                // If it's "now", we can optionally nudge the detection to the live AIS position
-                // but the user wants unification, so we'll treat them as one.
                 if (isCurrentTime) {
                     existing.position = {
                         ...existing.position,
@@ -211,15 +211,51 @@ export const MapView = ({
                         heading: live.cog,
                         timestamp: new Date(live.timestamp),
                     };
+                    if (live.name) existing.name = live.name;
                 }
             } else if (showLiveAIS) {
-                // Only add standalone live ships if explicitly enabled
-                result.push(mapLiveToVessel(live));
+                if (isLowZoom) {
+                    const gridX = Math.floor(live.lon / gridSize);
+                    const gridY = Math.floor(live.lat / gridSize);
+                    const key = `${gridX},${gridY}`;
+                    if (!liveRepresentatives[key] || live.mmsi < liveRepresentatives[key].mmsi) {
+                        liveRepresentatives[key] = live;
+                    }
+                } else {
+                    result.push(mapLiveToVessel(live));
+                }
             }
         });
 
-        return result;
-    }, [vessels, liveVessels, showLiveAIS, playbackTime]);
+        if (isLowZoom && showLiveAIS) {
+            Object.values(liveRepresentatives).forEach(live => {
+                if (!mmsiToVessel.has(String(live.mmsi))) {
+                    result.push(mapLiveToVessel(live));
+                }
+            });
+        }
+
+        // --- STABLE IDENTITY PATCH ---
+        const nextEntitiesMap = new Map<string, Vessel>();
+        const finalResult = result.map(v => {
+            const prev = prevEntitiesRef.current.get(v.id);
+            // If it's effectively the same vessel at the same spot, reuse the old object reference
+            if (prev &&
+                prev.position.lat === v.position.lat &&
+                prev.position.lng === v.position.lng &&
+                prev.position.heading === v.position.heading &&
+                prev.name === v.name
+            ) {
+                nextEntitiesMap.set(v.id, prev);
+                return prev;
+            }
+            nextEntitiesMap.set(v.id, v);
+            return v;
+        });
+        prevEntitiesRef.current = nextEntitiesMap;
+
+        return finalResult;
+    }, [vessels, liveVessels, showLiveAIS, playbackTime, zoom]);
 
     return (
         <MapContainer

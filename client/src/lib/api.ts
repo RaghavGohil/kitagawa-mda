@@ -52,7 +52,7 @@ export function transformVesselSummary(api: ApiVesselSummary): Vessel {
     const isIdentified = api.is_identified;
 
     return {
-        id: `vessel-${api.v_id}`,
+        id: isIdentified && mmsiVal > 0 ? `vessel-${mmsiVal}` : `unidentified-${api.v_id}`,
         mmsi: mmsiVal > 0 ? mmsiVal.toString() : "",
         name: api.name,
         type: isIdentified ? "ship" : "unidentified",

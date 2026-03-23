@@ -140,6 +140,8 @@ async def get_vessels(
         # Preload AIS coverage dates (cached)
         coverage = await _get_ais_coverage_dates(db)
 
+        # Dynamic point limits for high-fidelity discovery
+        # ... logic if needed ...
         where_clauses = []
         params = {"limit": limit}
 
@@ -177,15 +179,16 @@ async def get_vessels(
 
         # Dynamic grid size for grouping based on zoom
         # z >= 15: ~1m (effectively no grouping)
-        # z >= 8: ~10m
-        # z < 8: ~50m
+        # z >= 6: ~10m
+        # z < 6: ~50m
         # Grid-based sampling for "Representative Ships" at low zoom
         # This prevents UI lag by picking 1 real high-confidence vessel per grid cell
+        grid_size = 0.001  # Default small value for query stability
         representative_sql = ""
         vessel_order_sql = "ORDER BY last_seen DESC"
 
-        # Increase grid size for more aggressive sparsification at low zoom
-        if zoom < 12:
+        # Increase grid size for more aggressive sparsification at low zoom (< 6)
+        if zoom < 6:
             grid_size = 180.0 / (2**zoom)  # Larger cells for sparse display
             representative_sql = f"DISTINCT ON (ST_SnapToGrid(geom, {grid_size}))"
             vessel_order_sql = f"ORDER BY ST_SnapToGrid(geom, {grid_size}), confidence DESC, last_seen DESC"
@@ -193,18 +196,21 @@ async def get_vessels(
         # Refined query — picks 1 real representative vessel per grid cell at low zoom
         sql = text(f"""
             SELECT {representative_sql}
-                COALESCE(mmsi, -id) AS v_id,
-                1 AS detection_count, -- Each representative counts as 1 for UI consistency
-                confidence AS avg_confidence,
-                detection_datetime AS last_seen,
-                ST_Y(geom) AS lat,
-                ST_X(geom) AS lon,
-                ARRAY[sensor_type] AS sensor_types,
-                correlation_distance_m AS avg_dist,
-                custom_name AS display_name,
-                COALESCE(mmsi, 0) as real_mmsi,
-                classification as global_classification
-            FROM detections
+                d.id AS v_id,
+                1 AS detection_count,
+                d.confidence AS avg_confidence,
+                d.detection_datetime AS last_seen,
+                ST_Y(d.geom) AS lat,
+                ST_X(d.geom) AS lon,
+                ARRAY[d.sensor_type] AS sensor_types,
+                d.correlation_distance_m AS avg_dist,
+                d.custom_name AS display_name,
+                COALESCE(d.mmsi, 0) as real_mmsi,
+                d.classification as global_classification,
+                v.last_sog,
+                v.last_cog
+            FROM detections d
+            LEFT JOIN ais_vessels v ON d.mmsi = v.mmsi
             WHERE {where_str} AND {landmask_filter}
             {vessel_order_sql}
             LIMIT :limit
@@ -214,53 +220,19 @@ async def get_vessels(
         result = await db.execute(sql, params)
         rows = result.fetchall()
 
-        # Batch-fetch SOG/COG for identified vessels
-        identified_mmsis = [int(r[9]) for r in rows if r[9] and int(r[9]) > 0]
-        ais_info = {}
-        if identified_mmsis:
-            ais_result = await db.execute(
-                text("""
-                    SELECT DISTINCT ON (mmsi) mmsi, sog, cog
-                    FROM ais_tracks
-                    WHERE mmsi = ANY(:mmsis)
-                    ORDER BY mmsi, timestamp DESC
-                """),
-                {"mmsis": identified_mmsis},
-            )
-            for ar in ais_result.fetchall():
-                ais_info[int(ar[0])] = {"sog": ar[1], "cog": ar[2]}
-
-        # --- AUTO-CORRELATION ON SEEK (EPHEMERAL, SEQUENTIAL) ---
-        # Optimized: Cap at 5 sequential checks, and only at high zoom (>14)
-        indices_to_match = []
-        if zoom >= 14:
-            indices_to_match = [
-                i for i, r in enumerate(rows) if not r[9]
-            ]  # real_mmsi is r[9]
-
-        match_results = {}
-        if indices_to_match:
-            from backend.services.correlation import find_best_ais_match
-
-            for idx in indices_to_match[:5]:  # Cap at 5 for speed (~25ms total)
-                r = rows[idx]
-                match = await find_best_ais_match(db, r[4], r[5], r[3])
-                if match:
-                    match_results[idx] = match
+        # AIS Info is now pre-fetched via LEFT JOIN
+        ais_info = {
+            int(r[9]): {"sog": r[11], "cog": r[12]}
+            for r in rows
+            if r[9] and int(r[9]) > 0
+        }
 
         vessels = []
         for i, r in enumerate(rows):
-            res_match = match_results.get(i)
-            if res_match:
-                real_mmsi = res_match["mmsi"]
-                avg_dist = res_match["dist"]
-                display_name = res_match["name"]
-                db_cls = "identified"
-            else:
-                real_mmsi = int(r[9]) if r[9] else 0
-                avg_dist = float(r[7]) if r[7] is not None else None
-                display_name = r[8]
-                db_cls = r[10]
+            real_mmsi = int(r[9]) if r[9] else 0
+            avg_dist = float(r[7]) if r[7] is not None else None
+            display_name = r[8]
+            db_cls = r[10]
 
             last_seen_str = r[3].isoformat() if r[3] else None
 

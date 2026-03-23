@@ -7,7 +7,7 @@ import { Explorer } from "@/components/layout/Explorer";
 import { Alerts } from "@/components/panels/Alerts";
 import { LayerControl } from "@/components/panels/LayerControl";
 import { SearchFilterPanel } from "@/components/panels/SearchFilterPanel";
-import { VesselInfoPanel } from "@/components/panels/VesselInfoPanel";
+import { InfoPanel } from "@/components/panels/InfoPanel";
 import { Playback } from "@/components/panels/Playback";
 import { useVessels, useVessel, useAlerts } from "@/hooks/useVessels";
 import { Vessel, AnomalyType, ZoneType } from "@/types";
@@ -79,8 +79,8 @@ export default function DashboardPage() {
     if (!mapZoom) return 1000;
     if (mapZoom >= 15) return 20000;
     if (mapZoom >= 12) return 10000;
-    if (mapZoom >= 8) return 5000;
-    if (mapZoom >= 5) return 2000;
+    if (mapZoom >= 6) return 5000;
+    if (mapZoom >= 4) return 2000;
     return 1000;
   }, [mapZoom]);
 
@@ -223,12 +223,12 @@ export default function DashboardPage() {
               isMobile ? "z-[120] w-full" : "z-20 w-[360px]",
             )}>
               <div className="sticky top-0 z-10 flex justify-between items-center px-5 py-4 bg-background border-b border-border">
-                <span className="text-sm font-semibold truncate uppercase tracking-tight">Vessel Info</span>
+                <span className="text-sm font-semibold truncate uppercase tracking-tight">Info</span>
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setSelectedVesselId(null)}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              <VesselInfoPanel
+              <InfoPanel
                 vessel={selectedVessel}
                 isLoading={isLoadingDetail}
               />

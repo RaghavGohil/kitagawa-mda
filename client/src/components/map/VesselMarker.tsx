@@ -1,8 +1,9 @@
 "use client";
 
+import { memo } from "react";
 import { Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
-import { Vessel } from "@/types";
+import { Vessel, VesselType } from "@/types";
 
 interface VesselMarkerProps {
     vessel: Vessel;
@@ -14,7 +15,7 @@ interface VesselMarkerProps {
     timeRangeMs?: number;
 }
 
-export const VesselMarker = ({
+const VesselMarkerComponent = ({
     vessel,
     isSelected,
     showTrack,
@@ -24,51 +25,35 @@ export const VesselMarker = ({
     timeRangeMs = 2 * 24 * 60 * 60 * 1000,
 }: VesselMarkerProps) => {
     const isLive = vessel.id.startsWith("live-");
-    const size = isLive ? 28 : 33; // Live markers are slightly more refined
+    const size = isLive ? 28 : 33;
 
     // Time-based opacity
     const ageMs = playbackTime.getTime() - vessel.position.timestamp.getTime();
     const normalizedAge = Math.max(0, Math.min(1, ageMs / timeRangeMs));
-    const timeOpacity = Math.max(0.3, 1 - normalizedAge);
+    const timeOpacity = isLive ? 1.0 : Math.max(0.3, 1 - normalizedAge);
 
-    // Hide if far in future or too old
     if (ageMs < -5 * 60 * 1000 || ageMs > timeRangeMs) return null;
-
-    // Color Logic — use backend-authoritative color for detected vessels
-    // If a vessel has an MMSI and we are showing tracks/ships, the AISTrackLayer 
-    // handles the high-fidelity ship icon and name tag. We hide this marker 
-    // to avoid redundancy and 'ghost' markers.
-    // Hiding logic removed: we now let VesselMarker always handle the 'Current Position' icon
-    // to avoid vessels vanishing during live-to-database transitions.
-    // if (showTrack && vessel.mmsi && parseInt(vessel.mmsi) > 0) return null;
 
     let color: string;
     if (isLive) {
         color = "#10b981"; // Emerald Green for Live AIS
     } else {
-        // Use backend color if available, fallback to anomaly type mapping
         color = vessel.color ?? (
             vessel.anomaly.type === "identified" ? "#10b981" :
                 vessel.anomaly.type === "anomaly" ? "#ef4444" :
-                    "#475569" // Muted Slate-500 for unidentified (less distracting than light gray)
+                    "#475569"
         );
     }
 
     const strokeColor = color;
     const strokeWidth = isSelected ? 8 : (ageMs / (1000 * 60 * 60) < 1 ? 6 : 4);
 
-    // Zoom opacity for labels
-    const labelOpacity = (zoom <= 8 ? 0 : zoom === 9 ? 0.4 : zoom === 10 ? 0.7 : 1) * timeOpacity;
-
-    // SVG - Unified Polygon Design
     const hasHeading = vessel.position.heading !== 0 && vessel.position.heading != null;
-
-    // We use the EXACT polygon points requested and seen in the reference VesselMarker
     const svgContent = hasHeading
-        ? `<svg width="${size}" height="${size}" viewBox="-10 -10 120 120" style="transform: rotate(${vessel.position.heading}deg); transition: transform 0.8s linear; cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
+        ? `<svg width="${size}" height="${size}" viewBox="-10 -10 120 120" style="transform: rotate(${vessel.position.heading}deg); transition: transform 0.8s linear;">
         <polygon points="50,5 92,95 50,75 8,95" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.8) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
       </svg>`
-        : `<svg width="${size}" height="${size}" viewBox="0 0 100 100" style="cursor: pointer; pointer-events: none; position: absolute; top: 0; left: 0;">
+        : `<svg width="${size}" height="${size}" viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="${isSelected ? 24 : 12}" fill="${color}" fill-opacity="${(isSelected ? 0.95 : 0.5) * timeOpacity}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${timeOpacity}" />
       </svg>`;
 
@@ -79,19 +64,11 @@ export const VesselMarker = ({
         html: `
       <div style="position: relative; width: ${size}px; height: ${size}px;">
         ${svgContent}
-        <div style="opacity: ${labelOpacity}; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1); pointer-events: none; white-space: nowrap; margin-bottom: 10px; transition: opacity 0.2s ease-in-out; color: ${color};">
-          ${vessel.name}
-        </div>
       </div>
     `,
     });
 
-    // Track
-    const isCorrelated = vessel.mmsi && String(vessel.mmsi).trim() !== "";
-    const shouldShowTrack = isCorrelated && (showTrack || isSelected);
     const trackPositions: [number, number][] = vessel.track?.map(p => [p.lat, p.lng]) || [];
-
-    // Jitter for overlapping markers (Detections only)
     let jitterLat = 0;
     let jitterLng = 0;
     if (!isLive) {
@@ -105,12 +82,11 @@ export const VesselMarker = ({
         vessel.position.lng + jitterLng,
     ];
 
+    const isCorrelated = vessel.mmsi && String(vessel.mmsi).trim() !== "";
+    const shouldShowTrack = isCorrelated && (showTrack || isSelected);
+
     return (
         <>
-            {/* 
-              Historical Tracks are now handled by AISTrackLayer for MMSI vessels. 
-              The internal 'track' property is only for detected image-based local context.
-            */}
             {shouldShowTrack && trackPositions.length > 1 && (
                 <Polyline
                     positions={trackPositions}
@@ -122,14 +98,20 @@ export const VesselMarker = ({
                     }}
                 />
             )}
-
-            <Marker
-                position={position}
-                icon={icon}
-                eventHandlers={{
-                    click: () => onClick(vessel),
-                }}
-            />
+            <Marker position={position} icon={icon} eventHandlers={{ click: () => onClick(vessel) }} />
         </>
     );
 };
+
+export const VesselMarker = memo(VesselMarkerComponent, (prev, next) => {
+    return (
+        prev.vessel.id === next.vessel.id &&
+        prev.vessel.position.lat === next.vessel.position.lat &&
+        prev.vessel.position.lng === next.vessel.position.lng &&
+        prev.vessel.position.heading === next.vessel.position.heading &&
+        prev.isSelected === next.isSelected &&
+        prev.showTrack === next.showTrack &&
+        prev.zoom === next.zoom &&
+        prev.playbackTime.getTime() === next.playbackTime.getTime()
+    );
+});

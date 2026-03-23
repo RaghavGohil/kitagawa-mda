@@ -156,81 +156,55 @@ async def find_best_ais_match(
     det_time_utc = pd.to_datetime(dt, utc=True)
     if pd.isna(det_time_utc):
         return None
-    det_time_s = int(det_time_utc.to_datetime64().astype(np.int64) // 1_000_000_000)
 
     time_tol = pd.Timedelta(minutes=TIME_TOLERANCE_MINUTES)
     time_min = det_time_utc - time_tol
     time_max = det_time_utc + time_tol
 
-    # 1. Fetch candidate AIS tracks in the vicinity (buffered box)
-    ais_res = await db.execute(
-        text(
-            """
-            SELECT mmsi, timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
-                   COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
-            FROM ais_tracks
-            WHERE timestamp BETWEEN :tmin AND :tmax
-              AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 0.05)
-            ORDER BY mmsi, timestamp
-        """
-        ),
+    query = """
+    WITH ais_candidates AS (
+        SELECT mmsi,
+               timestamp AS t1,
+               geom AS p1,
+               LEAD(timestamp) OVER (PARTITION BY mmsi ORDER BY timestamp) AS t2,
+               LEAD(geom) OVER (PARTITION BY mmsi ORDER BY timestamp) AS p2
+        FROM ais_tracks
+        WHERE timestamp BETWEEN :tmin AND :tmax
+          AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 0.1)
+    )
+    SELECT mmsi,
+           ST_DistanceSphere(
+               ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
+               ST_LineInterpolatePoint(
+                   ST_MakeLine(p1, p2),
+                   EXTRACT(EPOCH FROM (:det_time - t1)) / EXTRACT(EPOCH FROM (t2 - t1))
+               )
+           ) AS dist
+    FROM ais_candidates
+    WHERE t1 <= :det_time AND t2 >= :det_time
+      AND t2 > t1
+    ORDER BY dist ASC
+    LIMIT 1;
+    """
+
+    res = await db.execute(
+        text(query),
         {
             "tmin": time_min.to_pydatetime(),
             "tmax": time_max.to_pydatetime(),
+            "det_time": det_time_utc.to_pydatetime(),
             "lat": lat,
             "lon": lon,
         },
     )
-    ais_rows = ais_res.fetchall()
-    if not ais_rows:
+    best_match = res.fetchone()
+
+    if not best_match:
         return None
 
-    # 2. Interpolate and match
-    ais_df = pd.DataFrame(
-        ais_rows,
-        columns=["mmsi", "base_date_time", "latitude", "longitude", "sog", "cog"],
-    )
-    ais_df["base_date_time"] = pd.to_datetime(ais_df["base_date_time"], utc=True)
+    best_mmsi, best_dist = best_match
 
-    best_mmsi = 0
-    best_dist = float("inf")
-
-    # Match each mmsi track
-    for mmsi, grp in ais_df.groupby("mmsi"):
-        if len(grp) < 2:
-            continue
-
-        interp = _interpolate_track_physics(grp, step_s=INTERP_SECONDS)
-        if interp.empty:
-            continue
-
-        ais_times_s = (
-            interp["base_date_time"].values.astype("datetime64[ns]").astype(np.int64)
-            // 1_000_000_000
-        )
-
-        # Find closest point in time
-        time_diffs = np.abs(ais_times_s - det_time_s)
-        time_tol_s = int(time_tol.total_seconds())
-
-        valid_time_idx = np.where(time_diffs <= time_tol_s)[0]
-        if valid_time_idx.size == 0:
-            continue
-
-        local_lats = interp["lat"].values[valid_time_idx]
-        local_lons = interp["lon"].values[valid_time_idx]
-
-        # Calculate distances
-        dists = _geod_distance_m_vec(lat, lon, local_lats, local_lons)
-        min_idx = np.argmin(dists)
-        min_dist = dists[min_idx]
-
-        if min_dist < best_dist and min_dist <= LOCATION_TOLERANCE_METERS:
-            best_dist = min_dist
-            best_mmsi = int(mmsi)
-
-    if best_mmsi > 0 and best_dist <= 200:
-        # Get vessel name
+    if best_mmsi > 0 and best_dist <= LOCATION_TOLERANCE_METERS:
         v_res = await db.execute(
             text("SELECT vessel_name FROM ais_vessels WHERE mmsi = :mmsi"),
             {"mmsi": best_mmsi},

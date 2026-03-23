@@ -31,9 +31,13 @@ async def get_ais_tracks(
     max_lat: float = Query(...),
     time_start: Optional[str] = Query(None, description="ISO timestamp start"),
     time_end: Optional[str] = Query(None, description="ISO timestamp end"),
+    center_time: Optional[str] = Query(
+        None, description="ISO timestamp for focal points (the 'worm' window)"
+    ),
+    window_mins: int = Query(240, description="Temporal window size in minutes"),
     mmsis: Optional[str] = Query(None, description="Comma-separated list of MMSIs"),
     zoom: float = Query(10, ge=1, le=22),
-    limit: int = Query(2000, ge=1, le=10000, description="Max number of MMSIs"),
+    limit: int = Query(500, ge=1, le=10000, description="Max number of MMSIs"),
     db: AsyncSession = Depends(get_db),
 ):
     zoom = int(zoom)
@@ -49,34 +53,39 @@ async def get_ais_tracks(
     if time_end:
         time_filter += " AND timestamp <= CAST(:time_end AS timestamptz)"
 
+    focal_time_filter = time_filter
+    if center_time:
+        focal_time_filter = " AND timestamp >= :focal_start AND timestamp <= :focal_end"
+
     # Always show tracks
     effective_limit = limit
 
-    mmsi_filter_sql = ""
+    # Calculate spatial buffer (50% of viewport) to avoid "orphaned" segments at the edge
+    d_lon = max_lon - min_lon
+    d_lat = max_lat - min_lat
+    buffer_val = max(d_lon, d_lat) * 0.5
+
+    # Common spatial filter with buffer expansion
+    spatial_filter = "ST_Expand(ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326), :buffer)"
+
+    mmsi_list_parsed = []
     if mmsis:
         mmsi_list_parsed = [
             int(m.strip()) for m in mmsis.split(",") if m.strip().isdigit()
         ]
-        if mmsi_list_parsed:
-            mmsi_filter_sql = " AND mmsi = ANY(:mmsis_arr)"
-
     # Tolerance for point simplification based on zoom
-    tolerance = 0.1 / (2 ** (max(1, zoom - 1)))
-
-    # Dynamic point limit based on zoom to prevent massive payloads at low zoom
-    # z=1-5: 20 pts, z=6-10: 50 pts, z=11-15: 100 pts, z>15: 200 pts
-    point_limit = 20
-    if zoom > 5:
-        point_limit = 50
-    if zoom > 10:
-        point_limit = 100
-    if zoom > 15:
-        point_limit = 200
+    # Extremely microscopic scale at z>=7 ensures tracks retain all natural curves
+    # while aggressively compressing the JSON payload size for stationary vessels.
+    # z < 7: aggressive simplification
+    # z >= 7: micro-simplification (0.0001 deg is ~11 meters, sub-pixel at high zoom)
+    tolerance = 0.0001
+    if zoom < 7:
+        tolerance = 0.1 / (2 ** (max(1, zoom - 1)))
 
     # Grid-based sampling for "Representative Ships" at low zoom
     # This prevents UI lag by picking 1 real vessel per grid cell
     representative_sql = ""
-    if zoom < 12:
+    if zoom < 6:
         # Cell size in degrees. z=3: ~2deg, z=11: ~0.01deg
         cell_size = 180.0 / (2**zoom)
         representative_sql = f"DISTINCT ON (ST_SnapToGrid(geom, {cell_size}))"
@@ -85,16 +94,49 @@ async def get_ais_tracks(
     else:
         mmsi_order_sql = "ORDER BY timestamp DESC"
 
-    # Optimized single query using LATERAL join for "Top-N per group" performance
-    # target_mmsis uses grid-based sampling at low zoom to pick representatives
+    # Hybrid lookup: Always fetch spatially relevant vessels AND specifically targeted MMSIs
+    # This prevents the 'popping' effect where discovery results were suppressed by targeted lookups
+    distinct_sql = "DISTINCT" if zoom >= 6 else representative_sql
+    actual_order_sql = mmsi_order_sql if zoom < 6 else ""
+
+    # Build the hybrid filter dynamically to ensure spatial index (GIST) usage
+    # Postgres often ignores spatial indexes if an OR condition is present
+
+    if mmsis and mmsi_list_parsed:
+        # If targeted MMSIs exist, use UNION for best index usage on both sides
+        # (geom for discovery, mmsi for targeted)
+        if zoom >= 6:
+            # High zoom: simple DISTINCT is enough, no sorting required inside CTE
+            target_mmsis_cte = f"""
+                SELECT DISTINCT mmsi FROM (
+                    SELECT mmsi FROM ais_tracks WHERE geom && {spatial_filter} {focal_time_filter}
+                    UNION ALL
+                    SELECT mmsi FROM ais_tracks WHERE mmsi = ANY(CAST(:mmsis_arr AS bigint[])) {time_filter}
+                ) sub
+            """
+        else:
+            # Low zoom: We need geom/timestamp for DISTINCT ON clustering
+            target_mmsis_cte = f"""
+                SELECT {distinct_sql} mmsi
+                FROM (
+                    SELECT mmsi, geom, timestamp FROM ais_tracks WHERE geom && {spatial_filter} {focal_time_filter}
+                    UNION ALL
+                    SELECT mmsi, geom, timestamp FROM ais_tracks WHERE mmsi = ANY(CAST(:mmsis_arr AS bigint[])) {time_filter}
+                ) tracks
+                {actual_order_sql}
+            """
+    else:
+        # Pure discovery: single fast spatial query (uses focal window for discovery speed)
+        target_mmsis_cte = f"""
+            SELECT {distinct_sql} mmsi
+            FROM ais_tracks
+            WHERE geom && {spatial_filter} {focal_time_filter}
+            {actual_order_sql}
+        """
+
     sql = text(f"""
         WITH target_mmsis AS (
-            SELECT {representative_sql} mmsi
-            FROM ais_tracks
-            WHERE ST_Intersects(
-                geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-            ) {time_filter} {mmsi_filter_sql}
-            {mmsi_order_sql}
+            {target_mmsis_cte}
             LIMIT :limit
         )
         SELECT
@@ -107,19 +149,21 @@ async def get_ais_tracks(
                     'sog', ROUND(COALESCE(t.sog, 0)::numeric, 2),
                     'cog', ROUND(COALESCE(t.cog, 0)::numeric, 2)
                 ) ORDER BY t.timestamp
-            ) AS points
+            ) AS points,
+            v.vessel_name,
+            v.vessel_type
         FROM target_mmsis m
+        LEFT JOIN ais_vessels v ON m.mmsi = CAST(v.mmsi AS bigint)
         CROSS JOIN LATERAL (
             SELECT timestamp, geom, sog, cog
             FROM ais_tracks
             WHERE mmsi = m.mmsi
-              AND ST_Intersects(
-                  geom, ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-              ) {time_filter}
+              AND geom && {spatial_filter}
+              {focal_time_filter}
             ORDER BY timestamp DESC
-            LIMIT :point_limit
+            LIMIT 500
         ) t
-        GROUP BY m.mmsi
+        GROUP BY m.mmsi, v.vessel_name, v.vessel_type
     """)
 
     params = {
@@ -129,44 +173,67 @@ async def get_ais_tracks(
         "max_lat": max_lat,
         "tolerance": tolerance,
         "limit": effective_limit,
-        "point_limit": point_limit,
+        "mmsis_arr": mmsi_list_parsed if (mmsis and mmsi_list_parsed) else [],
+        "buffer": buffer_val,
     }
-    if mmsis and mmsi_list_parsed:
-        params["mmsis_arr"] = mmsi_list_parsed
     if time_start:
         params["time_start"] = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
     if time_end:
         params["time_end"] = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
 
+    if center_time:
+        from datetime import timedelta
+
+        base_dt = datetime.fromisoformat(center_time.replace("Z", "+00:00"))
+        params["focal_start"] = base_dt - timedelta(minutes=window_mins / 2)
+        params["focal_end"] = base_dt + timedelta(minutes=window_mins / 2)
+
+    debug_mode = "Targeted" if (mmsis and mmsi_list_parsed) else "Discovery"
     print(
-        f"[AIS] Lateral Query: limit={effective_limit}, zoom={zoom}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})"
+        f"[AIS] {debug_mode} Query: limit={effective_limit}, zoom={zoom}, range=({min_lon}, {min_lat}) to ({max_lon}, {max_lat})"
     )
 
-    result = await db.execute(sql, params)
-    rows = result.fetchall()
+    try:
+        # Set a statement timeout to prevent hanging connections (10s)
+        await db.execute(text("SET LOCAL statement_timeout = 10000"))
 
-    tracks = []
-    for r in rows:
-        # Deduplicate points that snapped to the same grid location
-        seen_coords = set()
-        unique_points = []
-        for p in r[1]:
-            coord = (p["lat"], p["lon"])
-            if coord not in seen_coords:
-                unique_points.append(p)
-                seen_coords.add(coord)
+        result = await db.execute(sql, params)
+        rows = result.fetchall()
 
-        tracks.append(
-            {
-                "mmsi": r[0],
-                "point_count": len(unique_points),
-                "points": unique_points,
-            }
-        )
+        tracks = []
+        for r in rows:
+            # Deduplicate purely consecutive identical points (stationary vessel compression)
+            # We must NOT use a universal set(), as that destroys paths where vessels double back
+            unique_points = []
+            last_coord = None
+            for p in r[1]:
+                coord = (p["lat"], p["lon"])
+                if coord != last_coord:
+                    unique_points.append(p)
+                    last_coord = coord
 
-    return {"tracks": tracks, "total_vessels": len(tracks)}
+            # Safe unpack
+            name_val = r[2] if len(r) > 2 else None
+            type_val = r[3] if len(r) > 3 else None
 
-    return {"tracks": tracks, "total_vessels": len(tracks)}
+            tracks.append(
+                {
+                    "mmsi": r[0],
+                    "point_count": len(unique_points),
+                    "points": unique_points,
+                    "name": str(name_val) if name_val else None,
+                    "type": str(type_val) if type_val else None,
+                }
+            )
+
+        print(f"[AIS] {debug_mode} results: {len(tracks)} tracks found")
+        return {"tracks": tracks, "total_vessels": len(tracks)}
+    except Exception as e:
+        import traceback
+
+        print("[AIS API ERROR] Caught Exception:")
+        traceback.print_exc()
+        raise e
 
 
 @router.get("/tracks/{mmsi}")

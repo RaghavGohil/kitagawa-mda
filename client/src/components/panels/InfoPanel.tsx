@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { anomalyTypeData, getAnomalyDescription } from "@/data/data";
 
-interface VesselInfoPanelProps {
+interface InfoPanelProps {
     vessel: Vessel;
     isLoading?: boolean;
 }
@@ -20,18 +20,19 @@ const InfoRow = ({ label, value, mono }: { label: string; value: string | undefi
     </div>
 );
 
-export const VesselInfoPanel = ({ vessel, isLoading }: VesselInfoPanelProps) => {
-    const isAnomaly = vessel.anomaly.type === "anomaly";
-    const isOutOfCoverage = vessel.anomaly.type === "out_of_coverage";
-    const isLive = vessel.id.startsWith("live-");
+export const InfoPanel = ({ vessel, isLoading }: InfoPanelProps) => {
+    const anomalyType = vessel.anomaly?.type;
+    const isAnomaly = anomalyType === "anomaly";
+    const isOutOfCoverage = anomalyType === "out_of_coverage";
+    const isLive = vessel.id?.startsWith("live-");
 
-    // Use backend-authoritative color, fallback to anomaly type data
+    // Use backend-authoritative color, fallback to anomaly type data, default to slate
     const statusColor = vessel.color
-        ?? anomalyTypeData[vessel.anomaly.type]?.color
+        ?? (anomalyType ? anomalyTypeData[anomalyType]?.color : undefined)
         ?? "#6b7280";
 
-    const statusLabel = anomalyTypeData[vessel.anomaly.type]?.label ?? "Unknown";
-    const statusDescription = getAnomalyDescription(vessel.anomaly.type);
+    const statusLabel = (anomalyType ? anomalyTypeData[anomalyType]?.label : undefined) ?? "Historical Track / Live AIS";
+    const statusDescription = anomalyType ? getAnomalyDescription(anomalyType) : "Raw AIS telemetry data without correlated satellite imagery.";
 
     return (
         <div className="flex flex-col w-full">

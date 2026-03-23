@@ -148,6 +148,8 @@ class AISVessel(Base):
     draught = Column(Float, nullable=True)
     destination = Column(String(512), nullable=True)
     eta = Column(String(64), nullable=True)
+    last_sog = Column(Float, nullable=True)  # Current state cache
+    last_cog = Column(Float, nullable=True)  # Current state cache
     last_seen = Column(DateTime(timezone=True), nullable=True, index=True)
 
 

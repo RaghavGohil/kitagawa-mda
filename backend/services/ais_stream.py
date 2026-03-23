@@ -229,9 +229,13 @@ async def _connect_and_ingest():
                         )
                         active_tasks.add(batch_task)
                         if track_batch or vessel_batch:
-                            await _flush_to_db(track_batch, vessel_batch)
+                            # Capture and Clear: prevents race condition during DB await
+                            tracks_to_flush = list(track_batch)
+                            vessels_to_flush = dict(vessel_batch)
                             track_batch.clear()
                             vessel_batch.clear()
+                            await _flush_to_db(tracks_to_flush, vessels_to_flush)
+
                     elif task == recv_task:
                         try:
                             raw_msg = task.result()
@@ -253,9 +257,12 @@ async def _connect_and_ingest():
                             active_tasks.add(recv_task)
 
                 if len(track_batch) >= BATCH_SIZE:
-                    await _flush_to_db(track_batch, vessel_batch)
+                    # Capture and Clear: ensures no data loss during flush
+                    tracks_to_flush = list(track_batch)
+                    vessels_to_flush = dict(vessel_batch)
                     track_batch.clear()
                     vessel_batch.clear()
+                    await _flush_to_db(tracks_to_flush, vessels_to_flush)
 
         finally:
             # Clean up all active tasks
@@ -312,34 +319,24 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
         }
     )
 
-    # Broadcast translated message to frontend listeners
-    _state.broadcast(
-        {
-            "mmsi": mmsi,
-            "timestamp": ts.isoformat(),
-            "sog": float(sog or 0),
-            "cog": float(cog or 0),
-            "lat": float(lat),
-            "lon": float(lon),
-        }
-    )
-
-    # Throttled logging for observability (every 100 messages)
-    if _state.total_messages % 100 == 0:
-        print(f"[AIS Stream] Broadcasted: {_state.total_messages}. MMSI: {mmsi}")
-
     # Update metadata if available
     vessel_data = msg.get("MetaData")
     static_msg = msg.get("Message", {}).get("ShipStaticData", {})
 
+    v_name = None
+    v_type = None
+
     if vessel_data or static_msg:
+        v_name = (
+            vessel_data.get("ShipName", "").strip()
+            if vessel_data
+            else static_msg.get("Name", "").strip()
+        )
+        v_type = vessel_data.get("ShipType") if vessel_data else static_msg.get("Type")
+
         vessel_batch[mmsi] = {
-            "vessel_name": vessel_data.get("ShipName", "").strip()
-            if vessel_data
-            else static_msg.get("Name", "").strip(),
-            "vessel_type": vessel_data.get("ShipType")
-            if vessel_data
-            else static_msg.get("Type"),
+            "vessel_name": v_name,
+            "vessel_type": v_type,
             "imo": str(static_msg.get("Imo") or ""),
             "callsign": static_msg.get("CallSign", "").strip(),
             "length": float(
@@ -353,7 +350,23 @@ async def _handle_message(raw_msg, track_batch, vessel_batch):
             "draught": float(static_msg.get("MaximumStaticDraught", 0)),
             "destination": static_msg.get("Destination", "").strip(),
             "eta": f"{static_msg.get('Eta', {}).get('Month', 0)}-{static_msg.get('Eta', {}).get('Day', 0)} {static_msg.get('Eta', {}).get('Hour', 0)}:{static_msg.get('Eta', {}).get('Minute', 0)} UTC",
+            "last_sog": float(sog or 0),
+            "last_cog": float(cog or 0),
         }
+
+    # Broadcast translated message to frontend listeners (now with metadata)
+    _state.broadcast(
+        {
+            "mmsi": mmsi,
+            "timestamp": ts.isoformat(),
+            "sog": float(sog or 0),
+            "cog": float(cog or 0),
+            "lat": float(lat),
+            "lon": float(lon),
+            "name": v_name,
+            "type": v_type,
+        }
+    )
 
 
 async def _flush_to_db(track_batch, vessel_batch):
@@ -363,19 +376,37 @@ async def _flush_to_db(track_batch, vessel_batch):
 
     async with async_session() as db:
         try:
-            # 1. Update/Upsert Vessels
-            for mmsi, data in vessel_batch.items():
-                if not data["vessel_name"] and not data["imo"]:
-                    continue
+            # 1. Update/Upsert Vessels (Batched)
+            vessel_params = [
+                {
+                    "mmsi": m,
+                    "vessel_name": d["vessel_name"],
+                    "vessel_type": d["vessel_type"],
+                    "imo": d["imo"],
+                    "callsign": d["callsign"],
+                    "length": d["length"],
+                    "width": d["width"],
+                    "draught": d["draught"],
+                    "destination": d["destination"],
+                    "eta": d["eta"],
+                    "sog": d.get("last_sog", 0),
+                    "cog": d.get("last_cog", 0),
+                }
+                for m, d in vessel_batch.items()
+                if d["vessel_name"] or d["imo"]
+            ]
 
+            if vessel_params:
                 upsert_sql = """
                     INSERT INTO ais_vessels (
                         mmsi, vessel_name, vessel_type, imo, callsign, 
-                        length, width, draught, destination, eta, last_seen
+                        length, width, draught, destination, eta, last_seen,
+                        last_sog, last_cog
                     )
                     VALUES (
                         :mmsi, :vessel_name, :vessel_type, :imo, :callsign, 
-                        :length, :width, :draught, :destination, :eta, NOW()
+                        :length, :width, :draught, :destination, :eta, NOW(),
+                        :sog, :cog
                     )
                     ON CONFLICT (mmsi) DO UPDATE SET
                         vessel_name = COALESCE(NULLIF(EXCLUDED.vessel_name, ''), ais_vessels.vessel_name),
@@ -387,23 +418,11 @@ async def _flush_to_db(track_batch, vessel_batch):
                         draught = COALESCE(NULLIF(EXCLUDED.draught, 0), ais_vessels.draught),
                         destination = COALESCE(NULLIF(EXCLUDED.destination, ''), ais_vessels.destination),
                         eta = COALESCE(NULLIF(EXCLUDED.eta, '0-0 0:0 UTC'), ais_vessels.eta),
+                        last_sog = EXCLUDED.last_sog,
+                        last_cog = EXCLUDED.last_cog,
                         last_seen = NOW()
                 """
-                await db.execute(
-                    text(upsert_sql),
-                    {
-                        "mmsi": mmsi,
-                        "vessel_name": data["vessel_name"],
-                        "vessel_type": data["vessel_type"],
-                        "imo": data["imo"],
-                        "callsign": data["callsign"],
-                        "length": data["length"],
-                        "width": data["width"],
-                        "draught": data["draught"],
-                        "destination": data["destination"],
-                        "eta": data["eta"],
-                    },
-                )
+                await db.execute(text(upsert_sql), vessel_params)
 
             if track_batch:
                 insert_sql = """
