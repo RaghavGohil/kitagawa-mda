@@ -41,7 +41,7 @@ async def get_alerts(
             d.classification as alert_type,
             COALESCE(d.mmsi, -d.id) as v_id
         FROM detections d
-        WHERE (d.classification = 'unidentified' OR d.classification = 'anomaly')
+        WHERE (d.mmsi IS NULL OR d.correlation_distance_m > 500)
           AND d.confidence >= 0.5
           AND d.detection_datetime >= NOW() - INTERVAL '48 hours'
           AND (d.fp_flags IS NULL OR d.fp_flags NOT LIKE '%land%')

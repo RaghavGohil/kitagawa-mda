@@ -80,14 +80,12 @@ async def _get_ais_coverage_dates(db: AsyncSession) -> dict[str, bool]:
 # Backend-authoritative classification color map
 # ---------------------------------------------------------------------------
 _CLASSIFICATION_COLORS = {
-    "identified": "#10b981",  # Emerald green
-    "anomaly": "#ef4444",  # Red — dark vessel (in coverage, no AIS)
-    "out_of_coverage": "#6b7280",  # Gray — no AIS data available
+    "identified": "#3b82f6",  # Blue
+    "unidentified": "#ef4444",  # Red
 }
 _CLASSIFICATION_LABELS = {
     "identified": "Identified",
-    "anomaly": "Dark Vessel",
-    "out_of_coverage": "Out of Coverage",
+    "unidentified": "Unidentified",
 }
 
 
@@ -99,24 +97,15 @@ def _classify_vessel(
     db_classification: str | None = None,
 ) -> str:
     """
-    3-State classification (fallback when db_classification is missing):
+    Simplified dynamic classification:
       - identified:      Matched AIS within 500m
-      - anomaly:         In coverage area, no AIS match (dark vessel)
-      - out_of_coverage: No AIS data for that area/date
+      - unidentified:    No match or poor match
     """
-    if db_classification and db_classification in _CLASSIFICATION_COLORS:
-        return db_classification
-
-    if mmsi and mmsi > 0 and correlation_dist is not None and correlation_dist <= 200:
+    # Dynamic derivation (ignores db_classification as requested)
+    if mmsi and mmsi > 0 and correlation_dist is not None and correlation_dist <= 500:
         return "identified"
 
-    # Unidentified or bad match — check AIS coverage
-    if detection_date:
-        date_key = detection_date[:10]  # "YYYY-MM-DD"
-        if coverage.get(date_key, False):
-            return "anomaly"  # Coverage existed, vessel was dark
-
-    return "out_of_coverage"
+    return "unidentified"
 
 
 @router.get("")

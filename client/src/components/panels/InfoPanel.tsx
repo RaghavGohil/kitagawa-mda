@@ -22,8 +22,7 @@ const InfoRow = ({ label, value, mono }: { label: string; value: string | undefi
 
 export const InfoPanel = ({ vessel, isLoading }: InfoPanelProps) => {
     const anomalyType = vessel.anomaly?.type;
-    const isAnomaly = anomalyType === "anomaly";
-    const isOutOfCoverage = anomalyType === "out_of_coverage";
+    const isUnidentified = anomalyType === "unidentified";
     const isLive = vessel.id?.startsWith("live-");
 
     // Use backend-authoritative color, fallback to anomaly type data, default to slate
@@ -99,30 +98,20 @@ export const InfoPanel = ({ vessel, isLoading }: InfoPanelProps) => {
                 )}
             </div>
 
-            {/* Dark vessel warning or Identify status */}
-            {isAnomaly ? (
+            {/* Unidentified vessel warning */}
+            {isUnidentified && (
                 <div className="mx-5 mt-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                     <div className="flex gap-3">
                         <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                         <div>
-                            <p className="text-sm font-semibold text-red-500">Dark Vessel Alert</p>
+                            <p className="text-sm font-semibold text-red-500">Unidentified Vessel Alert</p>
                             <p className="text-sm text-muted-foreground mt-1">
-                                This vessel was detected in an area with AIS coverage but is not transmitting an AIS signal.
+                                This vessel was detected via satellite imagery but has no matching AIS signal in this area/time.
                             </p>
                         </div>
                     </div>
                 </div>
-            ) : isOutOfCoverage ? (
-                <div className="mx-5 mt-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                    <div className="flex gap-3 items-center">
-                        <Radar className="h-5 w-5 text-blue-500 shrink-0" />
-                        <div className="flex-1">
-                            <p className="text-sm font-semibold text-blue-500">Unidentified Vessel</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">No matching AIS data found in this area/time.</p>
-                        </div>
-                    </div>
-                </div>
-            ) : null}
+            )}
 
             <Separator className="my-4" />
 

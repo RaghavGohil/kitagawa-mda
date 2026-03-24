@@ -9,6 +9,7 @@ import {
     useMap,
     useMapEvent,
     useMapEvents,
+    Polyline,
 } from "react-leaflet";
 import { Vessel, ZoneType, LiveVessel, VesselPosition } from "@/types";
 import { VesselMarker } from "@/components/map/VesselMarker";
@@ -182,8 +183,8 @@ export const MapView = ({
     const prevEntitiesRef = useRef<Map<string, Vessel>>(new Map());
 
     // Merge detected vessels with live AIS vessels
-    const allEntities = useMemo(() => {
-        const result: Vessel[] = [...vessels];
+    const { allEntities, liveLinks } = useMemo(() => {
+        const liveVesselsList: Vessel[] = [];
         const mmsiToVessel = new Map<string, Vessel>();
 
         // Index detections by MMSI
@@ -214,18 +215,37 @@ export const MapView = ({
                         liveRepresentatives[key] = live;
                     }
                 } else {
-                    // Add as a separate marker even if we have a detection
-                    // We give it a slightly different ID to avoid conflict
-                    result.push(mapLiveToVessel(live));
+                    liveVesselsList.push(mapLiveToVessel(live));
                 }
             }
         });
 
         if (isLowZoom && showLiveAIS) {
             Object.values(liveRepresentatives).forEach(live => {
-                result.push(mapLiveToVessel(live));
+                liveVesselsList.push(mapLiveToVessel(live));
             });
         }
+
+        // Calculate links ONLY if showLiveAIS is on and we are at high zoom (to avoid clutter)
+        const links: { id: string; positions: [number, number][]; color: string }[] = [];
+        if (showLiveAIS && !isLowZoom) {
+            liveVesselsList.forEach(liveV => {
+                const detection = mmsiToVessel.get(liveV.mmsi);
+                if (detection) {
+                    links.push({
+                        id: `link-${liveV.mmsi}`,
+                        positions: [
+                            [detection.position.lat, detection.position.lng],
+                            [liveV.position.lat, liveV.position.lng]
+                        ],
+                        color: detection.color || (detection.anomaly.type === "identified" ? "#3b82f6" : "#ef4444")
+                    });
+                }
+            });
+        }
+
+        // Put live vessels FIRST so they are rendered UNDER detections
+        const result: Vessel[] = [...liveVesselsList, ...vessels];
 
         // --- STABLE IDENTITY PATCH ---
         const nextEntitiesMap = new Map<string, Vessel>();
@@ -246,7 +266,7 @@ export const MapView = ({
         });
         prevEntitiesRef.current = nextEntitiesMap;
 
-        return finalResult;
+        return { allEntities: finalResult, liveLinks: links };
     }, [vessels, liveVessels, showLiveAIS, playbackTime, zoom]);
 
     return (
@@ -283,7 +303,22 @@ export const MapView = ({
             {/* Coverage density overlay — renders below vessel markers */}
             <CoverageLayer show={showCoverage} />
 
-            <LiveAISLayer onUpdate={handleLiveUpdate} />
+            <LiveAISLayer onUpdate={handleLiveUpdate} enabled={showLiveAIS} />
+
+            {/* Connecting lines between satellite detections and live positions */}
+            {liveLinks.map(link => (
+                <Polyline
+                    key={link.id}
+                    positions={link.positions}
+                    pathOptions={{
+                        color: link.color,
+                        weight: 1.5,
+                        opacity: 0.6,
+                        dashArray: "5, 10",
+                        interactive: false
+                    }}
+                />
+            ))}
 
             <AISTrackLayer
                 show={showTracks}

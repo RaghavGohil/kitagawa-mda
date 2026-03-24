@@ -14,7 +14,7 @@ export const vesselTypeData: Record<VesselType, { label: string; color: string }
 };
 
 export const anomalyTypeData: Record<string, { label: string; color: string }> = {
-    identified: { label: "Identified", color: "#10b981" },
+    identified: { label: "Identified", color: "#3b82f6" },
     unidentified: { label: "Unidentified", color: "#ef4444" },
 };
 

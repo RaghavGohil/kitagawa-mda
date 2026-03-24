@@ -113,7 +113,6 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
                 UPDATE detections 
                 SET mmsi = :mmsi, 
                     correlation_distance_m = :dist, 
-                    classification = 'identified',
                     custom_name = :name
                 WHERE id = :id
             """
@@ -126,15 +125,12 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
         # Fallback classification
         from shared.naming import get_unidentified_name
 
-        # Simplified classification: "identified" vs "unidentified"
-        cls_state = "unidentified"
+        # Simplified dynamic classification
         u_name = get_unidentified_name(det_id)
 
         await db.execute(
-            text(
-                "UPDATE detections SET classification = :cls, custom_name = :name WHERE id = :id"
-            ),
-            {"cls": cls_state, "name": u_name, "id": det_id},
+            text("UPDATE detections SET custom_name = :name WHERE id = :id"),
+            {"name": u_name, "id": det_id},
         )
         await db.commit()
         return False

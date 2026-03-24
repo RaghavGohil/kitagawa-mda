@@ -7,6 +7,7 @@ import { API_BASE_URL } from "@/lib/api";
 
 interface LiveAISLayerProps {
     onUpdate: (vessels: Record<number, LiveVessel>) => void;
+    enabled: boolean;
 }
 
 /**
@@ -18,7 +19,7 @@ interface LiveAISLayerProps {
  * - Geographically filters incoming messages to the current map view.
  * - Buffers updates to 1s intervals to prevent React render-storms.
  */
-export const LiveAISLayer = ({ onUpdate }: LiveAISLayerProps) => {
+export const LiveAISLayer = ({ onUpdate, enabled }: LiveAISLayerProps) => {
     const map = useMap();
     const socketRef = useRef<WebSocket | null>(null);
     const bufferRef = useRef<Record<number, LiveVessel>>({});
@@ -26,6 +27,14 @@ export const LiveAISLayer = ({ onUpdate }: LiveAISLayerProps) => {
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
+        if (!enabled) {
+            if (socketRef.current) {
+                socketRef.current.close();
+                socketRef.current = null;
+            }
+            return;
+        }
+
         let isMounted = true;
 
         const connect = () => {

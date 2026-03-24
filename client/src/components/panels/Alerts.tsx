@@ -60,7 +60,7 @@ export const Alerts = ({ alerts, isLoading = false, onAlertClick }: RecentAlerts
                                     <div className="flex items-start gap-3 w-full">
                                         <div className={cn(
                                             "w-2 h-2 rounded-full mt-1.5 shrink-0",
-                                            alert.type === "identified" ? "bg-green-500" : "bg-red-500",
+                                            alert.type === "identified" ? "bg-blue-500" : "bg-red-500",
                                         )} />
                                         <div className="min-w-0 flex-1">
                                             <div className="flex justify-between items-start gap-2">

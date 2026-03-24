@@ -39,9 +39,7 @@ const VesselMarkerComponent = ({
         color = "#10b981"; // Emerald Green for Live AIS
     } else {
         color = vessel.color ?? (
-            vessel.anomaly.type === "identified" ? "#10b981" :
-                vessel.anomaly.type === "anomaly" ? "#ef4444" :
-                    "#475569"
+            vessel.anomaly.type === "identified" ? "#3b82f6" : "#ef4444"
         );
     }
 
