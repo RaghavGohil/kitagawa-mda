@@ -42,7 +42,7 @@ interface ApiAlert {
     id: string;
     vessel_id: string;
     vessel_name: string;
-    type: "anomaly";
+    type: string;
     timestamp: string;
 }
 
@@ -67,7 +67,7 @@ export function transformVesselSummary(api: ApiVesselSummary): Vessel {
         },
         track: [],
         anomaly: {
-            type: api.anomaly_type || "out_of_coverage",
+            type: api.anomaly_type || "unidentified",
             confidence: api.avg_confidence,
             description: "",
         },
@@ -159,7 +159,7 @@ export async function fetchVessel(vesselId: string): Promise<Vessel> {
             course: t.cog,
         })),
         anomaly: {
-            type: data.anomaly_type || "out_of_coverage",
+            type: data.anomaly_type || "unidentified",
             confidence: latestDetection.confidence || 0,
             description: "",
         },
@@ -183,7 +183,7 @@ export async function fetchAlerts(limit?: number): Promise<Alert[]> {
             id: alert.id,
             vesselId: alert.vessel_id,
             vesselName: alert.vessel_name,
-            type: alert.type as "anomaly" | "unidentified_in_coverage",
+            type: alert.type as any,
             timestamp: new Date(alert.timestamp),
         }),
     );

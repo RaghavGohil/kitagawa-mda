@@ -46,7 +46,7 @@ export default function DashboardPage() {
   const [timeRangeMs, setTimeRangeMs] = useState<number>(24 * 60 * 60 * 1000);
 
   const [visibleAnomalyTypes, setVisibleAnomalyTypes] = useState<Set<AnomalyType>>(
-    new Set(["identified", "anomaly", "out_of_coverage"]),
+    new Set(["identified", "unidentified"]),
   );
   const [visibleZoneTypes, setVisibleZoneTypes] = useState<Set<ZoneType>>(
     new Set(["eez", "shipping_lane"]),
