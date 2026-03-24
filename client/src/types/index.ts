@@ -1,5 +1,5 @@
 export type VesselType = "ship" | "unidentified";
-export type AnomalyType = "identified" | "anomaly" | "out_of_coverage";
+export type AnomalyType = "identified" | "unidentified";
 
 export type ZoneType = "eez" | "restricted" | "port" | "shipping_lane";
 
@@ -46,8 +46,16 @@ export interface Alert {
     id: string;
     vesselId: string;
     vesselName: string;
-    type: "anomaly" | "unidentified_in_coverage";
+    type: "identified" | "unidentified" | "anomaly"; // alert-specific type
     timestamp: Date;
+}
+
+export interface Zone {
+    id: string;
+    name: string;
+    type: ZoneType;
+    coordinates: [number, number][];
+    description: string;
 }
 
 export interface Zone {

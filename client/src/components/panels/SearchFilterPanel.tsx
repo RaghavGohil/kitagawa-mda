@@ -102,7 +102,7 @@ export const SearchFilterPanel = ({ vessels, onFilteredVessels, onVesselSelect, 
                 <div className="rounded-lg border border-border p-4 space-y-4">
                     <h4 className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Filters</h4>
                     <div className="space-y-2">
-                        <label className="text-sm text-muted-foreground">Vessel Type</label>
+                        <label className="text-sm text-muted-foreground">Classification</label>
                         <Select value={anomalyTypeFilter} onValueChange={(v) => { if (v) setAnomalyTypeFilter(v); }}>
                             <SelectTrigger className="h-10 w-full">
                                 <SelectValue placeholder="All vessels" />

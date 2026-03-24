@@ -27,10 +27,10 @@ async def get_alerts(
       1. Anomaly alerts: identified vessels with correlation_distance > 500m
       2. Unidentified alerts: unmatched detections where AIS data was available
     """
-    # Only alert on TRUE dark vessels:
-    #   - classification = 'anomaly' (detected in coverage area, no AIS transmission)
+    # Only alert on recent unidentified vessels:
+    #   - classification = 'unidentified'
     #   - confidence >= 0.5 (meaningful detections only)
-    #   - Deduplicated per vessel using DISTINCT ON (v_id)
+    #   - time window: last 48 hours to prevent "persistent" stale alerts
     sql = text("""
         SELECT DISTINCT ON (v_id)
             d.id,
@@ -41,8 +41,9 @@ async def get_alerts(
             d.classification as alert_type,
             COALESCE(d.mmsi, -d.id) as v_id
         FROM detections d
-        WHERE d.classification = 'anomaly'
+        WHERE (d.classification = 'unidentified' OR d.classification = 'anomaly')
           AND d.confidence >= 0.5
+          AND d.detection_datetime >= NOW() - INTERVAL '48 hours'
           AND (d.fp_flags IS NULL OR d.fp_flags NOT LIKE '%land%')
         ORDER BY v_id, d.detection_datetime DESC
         LIMIT :limit

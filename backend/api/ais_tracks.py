@@ -134,6 +134,47 @@ async def get_ais_tracks(
             {actual_order_sql}
         """
 
+    # Optimize the LATERAL join to find points nearest to center_time
+    # Instead of scanning a broad window, we perform two fast index-backed lookups
+    # (before and after focal time) to get the most relevant 10+10 points.
+    lateral_sql = f"""
+        (
+            SELECT timestamp, geom, sog, cog
+            FROM ais_tracks
+            WHERE mmsi = m.mmsi
+              AND geom && {spatial_filter}
+              {focal_time_filter}
+            ORDER BY timestamp DESC
+            LIMIT 500
+        )
+    """
+
+    if center_time:
+        # High-precision focal lookup: 10 points before, 10 points after
+        # This is extremely fast with (mmsi, timestamp) index.
+        # We fetch the points first, THEN filter by geom to avoid confusing the optimizer.
+        lateral_sql = f"""
+            (
+                SELECT * FROM (
+                    (SELECT timestamp, geom, sog, cog
+                    FROM ais_tracks
+                    WHERE mmsi = m.mmsi
+                      AND timestamp <= :center_time
+                    ORDER BY timestamp DESC
+                    LIMIT 10)
+                    UNION ALL
+                    (SELECT timestamp, geom, sog, cog
+                    FROM ais_tracks
+                    WHERE mmsi = m.mmsi
+                      AND timestamp > :center_time
+                    ORDER BY timestamp ASC
+                    LIMIT 10)
+                ) sub
+                WHERE geom && {spatial_filter}
+                ORDER BY timestamp DESC
+            )
+        """
+
     sql = text(f"""
         WITH target_mmsis AS (
             {target_mmsis_cte}
@@ -154,15 +195,7 @@ async def get_ais_tracks(
             v.vessel_type
         FROM target_mmsis m
         LEFT JOIN ais_vessels v ON m.mmsi = CAST(v.mmsi AS bigint)
-        CROSS JOIN LATERAL (
-            SELECT timestamp, geom, sog, cog
-            FROM ais_tracks
-            WHERE mmsi = m.mmsi
-              AND geom && {spatial_filter}
-              {focal_time_filter}
-            ORDER BY timestamp DESC
-            LIMIT 500
-        ) t
+        CROSS JOIN LATERAL {lateral_sql} t
         GROUP BY m.mmsi, v.vessel_name, v.vessel_type
     """)
 
@@ -176,6 +209,10 @@ async def get_ais_tracks(
         "mmsis_arr": mmsi_list_parsed if (mmsis and mmsi_list_parsed) else [],
         "buffer": buffer_val,
     }
+    if center_time:
+        params["center_time"] = datetime.fromisoformat(
+            center_time.replace("Z", "+00:00")
+        )
     if time_start:
         params["time_start"] = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
     if time_end:

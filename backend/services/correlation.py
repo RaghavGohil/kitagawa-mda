@@ -124,14 +124,10 @@ async def correlate_single_detection(db: AsyncSession, detection_id: int) -> boo
         return True
     else:
         # Fallback classification
-        from backend.api.vessels import _get_ais_coverage_dates
         from shared.naming import get_unidentified_name
 
-        coverage = await _get_ais_coverage_dates(db)
-        det_time_utc = pd.to_datetime(det_time, utc=True)
-        det_date_str = det_time_utc.strftime("%Y-%m-%d")
-        has_coverage = coverage.get(det_date_str, False)
-        cls_state = "anomaly" if has_coverage else "out_of_coverage"
+        # Simplified classification: "identified" vs "unidentified"
+        cls_state = "unidentified"
         u_name = get_unidentified_name(det_id)
 
         await db.execute(

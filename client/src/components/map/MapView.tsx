@@ -201,19 +201,11 @@ export const MapView = ({
             const mmsiStr = String(live.mmsi);
             const existing = mmsiToVessel.get(mmsiStr);
 
-            if (existing) {
-                if (isCurrentTime) {
-                    existing.position = {
-                        ...existing.position,
-                        lat: live.lat,
-                        lng: live.lon,
-                        speed: live.sog,
-                        heading: live.cog,
-                        timestamp: new Date(live.timestamp),
-                    };
-                    if (live.name) existing.name = live.name;
-                }
-            } else if (showLiveAIS) {
+            // Separate Layer Logic:
+            // We no longer overwrite the detection's position with live AIS.
+            // This allows the user to see the detection at the original 'inference' spot
+            // while the live AIS shows where the boat is right now.
+            if (showLiveAIS) {
                 if (isLowZoom) {
                     const gridX = Math.floor(live.lon / gridSize);
                     const gridY = Math.floor(live.lat / gridSize);
@@ -222,6 +214,8 @@ export const MapView = ({
                         liveRepresentatives[key] = live;
                     }
                 } else {
+                    // Add as a separate marker even if we have a detection
+                    // We give it a slightly different ID to avoid conflict
                     result.push(mapLiveToVessel(live));
                 }
             }
@@ -229,9 +223,7 @@ export const MapView = ({
 
         if (isLowZoom && showLiveAIS) {
             Object.values(liveRepresentatives).forEach(live => {
-                if (!mmsiToVessel.has(String(live.mmsi))) {
-                    result.push(mapLiveToVessel(live));
-                }
+                result.push(mapLiveToVessel(live));
             });
         }
 
