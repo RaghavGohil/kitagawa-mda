@@ -30,4 +30,5 @@ jobs:
         run: python -m compileall -q backend inference shared
 
       - name: Run Unit Tests
-        run: pytest inference/tests/ -v
+        # `python -m` puts the repo root on sys.path so `shared` imports resolve
+        run: python -m pytest inference/tests/ -v
