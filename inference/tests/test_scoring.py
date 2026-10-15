@@ -31,7 +31,8 @@ def make_detection(
     lon: float = -70.0,
     sensor_type: SensorType = SensorType.SAR,
     detection_datetime: str = "2024-06-15T10:00:00Z",
-    bbox_wkt: str = "POLYGON((-70.1 34.9, -70.0 34.9, -70.0 35.0, -70.1 35.0, -70.1 34.9))",
+    # ~0.9 km wide: under MAX_SHIP_WIDTH_KM so the plausibility filter keeps it
+    bbox_wkt: str = "POLYGON((-70.01 34.99, -70.0 34.99, -70.0 35.0, -70.01 35.0, -70.01 34.99))",
 ) -> Detection:
     return Detection(
         image_name="TEST_IMAGE",
@@ -231,9 +232,12 @@ class TestSituationScorer:
     def test_polar_region_penalty(self):
         """Detection at very high latitude > 70° should get slight penalty."""
         det = make_detection(lat=75.0, lon=-20.0, sensor_type=SensorType.SAR)
-        score = self.scorer.score(det, SensorType.SAR)
-        # Zone factor alone: -0.05. Other components may add more.
-        assert score <= 0, "Polar region should not be boosted"
+        lane = make_detection(lat=40.0, lon=-50.0, sensor_type=SensorType.SAR)
+        # Zone factor is -0.05 (polar) vs +0.05 (shipping lane); SAR and
+        # peak-hour bonuses apply equally to both, so compare relatively.
+        assert self.scorer.score(det, SensorType.SAR) < self.scorer.score(
+            lane, SensorType.SAR
+        ), "Polar region should score below a shipping lane"
 
     def test_score_bounded(self):
         """Any situation score must be in [-0.3, +0.3]."""

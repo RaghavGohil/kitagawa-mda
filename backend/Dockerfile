@@ -52,7 +52,8 @@ COPY shared/ ./shared/
 # Copy backend
 COPY backend/ ./backend/
 COPY backend/prestart.sh /app/prestart.sh
-RUN chmod +x /app/prestart.sh
+COPY scripts/ ./scripts/
+RUN chmod +x /app/prestart.sh /app/scripts/migrate.sh
 
 VOLUME ["/data"]
 

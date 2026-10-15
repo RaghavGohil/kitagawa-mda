@@ -159,58 +159,6 @@ async def get_detections(
         }
 
 
-@router.get("/{detection_id}")
-async def get_detection(
-    detection_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a single detection with full details."""
-    result = await db.execute(
-        text("""
-            SELECT
-                d.id, d.image_name, d.sensor_type, d.confidence,
-                d.detection_datetime, d.mmsi, d.correlation_distance_m,
-                ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon,
-                d.bbox_xmin, d.bbox_ymin, d.bbox_xmax, d.bbox_ymax,
-                d.image_capture_start, d.image_capture_end,
-                ST_AsGeoJSON(d.bbox_geom) AS bbox_geojson,
-                ic.minio_key
-            FROM detections d
-            LEFT JOIN image_chips ic ON ic.detection_id = d.id
-            WHERE d.id = :det_id
-        """),
-        {"det_id": detection_id},
-    )
-    r = result.fetchone()
-    if not r:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail="Detection not found")
-
-    chip_url = ""
-    if r[16]:  # minio_key
-        from backend.services.chips import get_chip_url
-
-        chip_url = get_chip_url(r[16])
-
-    return {
-        "id": r[0],
-        "image_name": r[1],
-        "sensor_type": r[2],
-        "confidence": round(r[3], 4),
-        "detection_datetime": r[4].isoformat() if r[4] else None,
-        "mmsi": r[5],
-        "correlation_distance_m": round(r[6], 2) if r[6] else None,
-        "lat": round(r[7], 6),
-        "lon": round(r[8], 6),
-        "pixel_bbox": [r[9], r[10], r[11], r[12]],
-        "image_capture_start": r[13].isoformat() if r[13] else None,
-        "image_capture_end": r[14].isoformat() if r[14] else None,
-        "bbox_geojson": r[15],
-        "chip_url": chip_url,
-    }
-
-
 @router.get("/geojson")
 async def get_detections_geojson(
     min_lon: float = Query(...),
@@ -266,4 +214,56 @@ async def get_detections_geojson(
     return {
         "type": "FeatureCollection",
         "features": features,
+    }
+
+
+@router.get("/{detection_id}")
+async def get_detection(
+    detection_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single detection with full details."""
+    result = await db.execute(
+        text("""
+            SELECT
+                d.id, d.image_name, d.sensor_type, d.confidence,
+                d.detection_datetime, d.mmsi, d.correlation_distance_m,
+                ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon,
+                d.bbox_xmin, d.bbox_ymin, d.bbox_xmax, d.bbox_ymax,
+                d.image_capture_start, d.image_capture_end,
+                ST_AsGeoJSON(d.bbox_geom) AS bbox_geojson,
+                ic.minio_key
+            FROM detections d
+            LEFT JOIN image_chips ic ON ic.detection_id = d.id
+            WHERE d.id = :det_id
+        """),
+        {"det_id": detection_id},
+    )
+    r = result.fetchone()
+    if not r:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Detection not found")
+
+    chip_url = ""
+    if r[16]:  # minio_key
+        from backend.services.chips import get_chip_url
+
+        chip_url = get_chip_url(r[16])
+
+    return {
+        "id": r[0],
+        "image_name": r[1],
+        "sensor_type": r[2],
+        "confidence": round(r[3], 4),
+        "detection_datetime": r[4].isoformat() if r[4] else None,
+        "mmsi": r[5],
+        "correlation_distance_m": round(r[6], 2) if r[6] else None,
+        "lat": round(r[7], 6),
+        "lon": round(r[8], 6),
+        "pixel_bbox": [r[9], r[10], r[11], r[12]],
+        "image_capture_start": r[13].isoformat() if r[13] else None,
+        "image_capture_end": r[14].isoformat() if r[14] else None,
+        "bbox_geojson": r[15],
+        "chip_url": chip_url,
     }

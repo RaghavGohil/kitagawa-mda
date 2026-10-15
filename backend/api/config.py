@@ -17,19 +17,14 @@ async def get_classification_config():
     return {
         "states": {
             "identified": {
-                "color": "#10b981",
+                "color": "#3b82f6",
                 "label": "Identified",
                 "description": "AIS-correlated within 500m tolerance",
             },
-            "anomaly": {
+            "unidentified": {
                 "color": "#ef4444",
-                "label": "Dark Vessel",
-                "description": "Detected in coverage area with no AIS transmission",
-            },
-            "out_of_coverage": {
-                "color": "#6b7280",
-                "label": "Out of Coverage",
-                "description": "Detected but no AIS data available for this area and date",
+                "label": "Unidentified",
+                "description": "No matching AIS data at time of detection (potential dark vessel)",
             },
         }
     }

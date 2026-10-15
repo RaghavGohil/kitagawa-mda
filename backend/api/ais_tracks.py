@@ -273,60 +273,6 @@ async def get_ais_tracks(
         raise e
 
 
-@router.get("/tracks/{mmsi}")
-async def get_track_by_mmsi(
-    mmsi: int,
-    time_start: Optional[str] = None,
-    time_end: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get the full track for a specific vessel by MMSI."""
-    time_filter = ""
-    params = {"mmsi": mmsi}
-    if time_start:
-        time_filter += " AND timestamp >= CAST(:time_start AS timestamptz)"
-        params["time_start"] = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
-    if time_end:
-        time_filter += " AND timestamp <= CAST(:time_end AS timestamptz)"
-        params["time_end"] = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
-
-    result = await db.execute(
-        text(f"""
-            SELECT
-                timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
-                COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
-            FROM ais_tracks
-            WHERE mmsi = :mmsi {time_filter}
-            ORDER BY timestamp
-        """),
-        params,
-    )
-    points = result.fetchall()
-
-    return {
-        "mmsi": mmsi,
-        "point_count": len(points),
-        "points": [
-            {
-                "timestamp": p[0].isoformat() if p[0] else None,
-                "lat": round(p[1], 6)
-                if p[1] is not None and math.isfinite(p[1])
-                else 0.0,
-                "lon": round(p[2], 6)
-                if p[2] is not None and math.isfinite(p[2])
-                else 0.0,
-                "sog": round(p[3], 2)
-                if p[3] is not None and math.isfinite(p[3])
-                else 0.0,
-                "cog": round(p[4], 2)
-                if p[4] is not None and math.isfinite(p[4])
-                else 0.0,
-            }
-            for p in points
-        ],
-    }
-
-
 @router.get("/tracks/geojson")
 async def get_tracks_geojson(
     min_lon: float = Query(...),
@@ -396,6 +342,60 @@ async def get_tracks_geojson(
     return {
         "type": "FeatureCollection",
         "features": features,
+    }
+
+
+@router.get("/tracks/{mmsi}")
+async def get_track_by_mmsi(
+    mmsi: int,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the full track for a specific vessel by MMSI."""
+    time_filter = ""
+    params = {"mmsi": mmsi}
+    if time_start:
+        time_filter += " AND timestamp >= CAST(:time_start AS timestamptz)"
+        params["time_start"] = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
+    if time_end:
+        time_filter += " AND timestamp <= CAST(:time_end AS timestamptz)"
+        params["time_end"] = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
+
+    result = await db.execute(
+        text(f"""
+            SELECT
+                timestamp, ST_Y(geom) AS lat, ST_X(geom) AS lon,
+                COALESCE(sog, 0) AS sog, COALESCE(cog, 0) AS cog
+            FROM ais_tracks
+            WHERE mmsi = :mmsi {time_filter}
+            ORDER BY timestamp
+        """),
+        params,
+    )
+    points = result.fetchall()
+
+    return {
+        "mmsi": mmsi,
+        "point_count": len(points),
+        "points": [
+            {
+                "timestamp": p[0].isoformat() if p[0] else None,
+                "lat": round(p[1], 6)
+                if p[1] is not None and math.isfinite(p[1])
+                else 0.0,
+                "lon": round(p[2], 6)
+                if p[2] is not None and math.isfinite(p[2])
+                else 0.0,
+                "sog": round(p[3], 2)
+                if p[3] is not None and math.isfinite(p[3])
+                else 0.0,
+                "cog": round(p[4], 2)
+                if p[4] is not None and math.isfinite(p[4])
+                else 0.0,
+            }
+            for p in points
+        ],
     }
 
 

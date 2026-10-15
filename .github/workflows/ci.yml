@@ -7,24 +7,9 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test-backend:
-    name: Backend Pytest
+  test:
+    name: Python checks
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgis/postgis:15-3.3
-        env:
-          POSTGRES_USER: kitagawa
-          POSTGRES_PASSWORD: kitagawa_password
-          POSTGRES_DB: kitagawa_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Checkout Code
@@ -34,35 +19,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip" # Highly optimized dependency caching
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            libgdal-dev \
-            libgeos-dev \
-            libproj-dev
-
-      - name: Install Python Dependencies
+      - name: Install Test Dependencies
+        # Scoring tests only need numpy + pydantic; no GPU, DB, or GDAL.
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install pytest pytest-asyncio
+          pip install numpy pydantic pytest
 
-      - name: Run Pytest
-        env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_USER: kitagawa
-          POSTGRES_PASSWORD: kitagawa_password
-          POSTGRES_DB: kitagawa_db
-          DISABLE_AUTO_INGEST: "1" # Prevent 1.7GB satellite downloads in CI
-        run: |
-          # If a test folder exists, run it. Otherwise, this is a placeholder.
-          if [ -d "backend/tests" ]; then
-            pytest backend/tests/ -v
-          else
-            echo "No tests found in backend/tests/, passing cleanly."
-          fi
+      - name: Syntax Check
+        run: python -m compileall -q backend inference shared
+
+      - name: Run Unit Tests
+        run: pytest inference/tests/ -v
